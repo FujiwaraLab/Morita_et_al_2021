@@ -1,0 +1,360 @@
+---
+title: Analysis of scRNA-seq data 6
+author: <span style="font-style:italic"> Ritsuko Morita </span>
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: '5'
+    df_print: paged
+    css: ./style/style.css
+---
+
+# `r kableExtra::text_spec("Data output", bold = TRUE)`
+Here, results of pseudo-space analysis using E12.0 epithelial cells were visualized.
+
+## Data setup
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Load libraries
+library(Seurat) # version 3.0.1
+library(useful) # Corner function
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(monocle)
+library(devtools)
+library(cowplot)
+
+# Load original functions
+source("./Src/Visualization_for_object_of_Seurat_v3.r")
+source("./Src/Visualization_for_object_of_Monocle_v2.r")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load Seurat object
+EWF0 <- readRDS("./output/mmHairF_tpm_Seurat_v2_E12epithelium_scale10000.obj")
+# Updates Seurat v2 object to Seurat v3 object
+EWF <- UpdateSeuratObject(EWF0)
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+saveRDS(EWF, "./output/mmHairF_tpm_Seurat_v3_epithelium_without_E12-01_scale10000.obj")
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+EWF <- readRDS("./output/mmHairF_tpm_Seurat_v3_epithelium_without_E12-01_scale10000.obj")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load Monocle object
+RamDA <- readRDS(file = "./output/mmHairF_tpm_monocle_v2_E12epithelium.obj")
+```
+
+## Visualization 1 (tSNE map colored by CellType)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+myplot_cell_clusters(RamDA, 1, 2, color_by = "CellType", cell_size = 5, cell_name_size = 20, n.col = 1, 
+                     outline.size = 0.5, manualcolor = c("red", "magenta", "blue", "lightgrey"))
+```
+
+## Visualization 2 (Pseudo-space colored by CellType)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+myplot_cell_trajectory(RamDA, 1, 2, color_by = "CellType", cell_size = 5, cell_name_size = 20, 
+                       n.col = 1, outline.size = 0.5, 
+                       manualcolor =  c("red", "magenta", "blue", "lightgrey")) + scale_x_reverse()
+```
+
+## Visualization 3 (Pseudo-space colored by pseudo-space value)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+myplot_cell_trajectory(RamDA, 1, 2, color_by = "Pseudotime", cell_size = 5, cell_name_size = 20, 
+                       n.col = 1, outline.size = 0.5, pch.use = 21, pt.color = RColorBrewer::brewer.pal(9,"YlGn"), 
+                       use_color_gradient = TRUE) + scale_x_reverse()
+```
+
+## Visualization 4 (FeaturePlot)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Export information of Monocle object to Seurat object
+EWF.temp <- subset(EWF, cells = rownames(pData(RamDA)))
+EWF.temp@reductions$tsne@cell.embeddings <- t(RamDA@reducedDimS)[colnames(EWF.temp), ]
+colnames(EWF.temp@reductions$tsne@cell.embeddings) <- c("tSNE_1", "tSNE_2")
+EWF.temp@meta.data$Cluster_monocle <- pData(RamDA)[colnames(EWF.temp), ]$Cluster
+EWF.temp@meta.data$Pseudotime <- pData(RamDA)[colnames(EWF.temp), ]$Pseudotime
+EWF.temp@meta.data$CellType <- pData(RamDA)[colnames(EWF.temp), ]$CellType
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=4.5}
+gene <- list("Sox21", "Bmp2", "Sp5", "Dkk4", "Shh", "Lrp4", "Wnt10b", "Ascl4", "Pthlh", "Gadd45g", "Lhx2", "Edar", 
+            "Smoc2", "Wif1", "Cdh3", "Ifitm3", "Nfatc1", "Sox9", "Sostdc1", "Lmo1", "Wnt7b", "Wnt4", "Krt15")
+
+# FeaturePlot
+myFP <- list()
+myFP <- lapply(gene, function(i) mySingleFeaturePlot(EWF.temp, i, title.size = 15, pch.use = 21, 
+                                                      pt.size = 5, outline.size = 0.5, outline.color = "grey20", 
+                                                      legend.position = "right", theme.grey = F, no.rect = T) + 
+                 scale_x_reverse())
+# print(myFP[[1]])
+```
+
+
+## Visualization 5 (FeaturePlot)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=4}
+# Export tSNE of Monocle object to Seurat object
+colnames(RamDA@reducedDimA) <- colnames(RamDA@reducedDimS)
+EWF.temp@reductions$tsne@cell.embeddings <- t(RamDA@reducedDimA)[colnames(EWF.temp), ]
+colnames(EWF.temp@reductions$tsne@cell.embeddings) <- c("tSNE_1","tSNE_2")
+
+gene <- list("Sox21", "Bmp2", "Sp5", "Dkk4", "Shh", "Lrp4", "Wnt10b", "Ascl4", "Pthlh", "Gadd45g", "Lhx2", "Edar", 
+            "Smoc2", "Wif1", "Cdh3", "Ifitm3", "Nfatc1", "Sox9", "Sostdc1", "Lmo1", "Wnt7b", "Wnt4", "Krt15")
+
+# FeaturePlot
+myFP2 <- list()
+myFP2 <- lapply(gene, function(i) mySingleFeaturePlot(EWF.temp, i, title.size = 15, pch.use = 21, 
+                                                      pt.size = 5, outline.size = 0.5, outline.color = "grey20", 
+                                                      legend.position = "right", theme.grey = F, no.rect = T))
+# print(myFP2[[1]])
+```
+
+
+## Visualization 6 (Gene expression changing in pseudo space)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=10}
+data.use <- data.frame(FetchData(EWF.temp, vars = c("Pseudotime", "CellType")), 
+                      t(EWF.temp@assays$RNA@scale.data[c("Bmp2", "Shh", "Pthlh", "Nfatc1", "Sox9", "Wnt4", "Lmo1"), ]))
+data.use$Cell <- rownames(data.use)
+data.usemod <- data.use %>% tidyr::gather(key="genes", value="value", -Pseudotime, -CellType, -Cell)
+
+color1 <- "magenta" 
+color2 <- "blue"
+color3 <- "red" 
+color4 <- "lightgrey" 
+
+p <- ggplot(data.use) +
+  theme_bw() +
+  geom_point(data = subset(data.usemod, data.usemod$CellType == "Unknown"), shape = 21, size = 4, 
+             colour = "black", fill = color4, stroke = 0.2, aes(x = Pseudotime, y = -1.5)) +
+  geom_point(data = subset(data.usemod, data.usemod$CellType == "placode"), shape = 21, size = 4, 
+             colour = "black", fill = color2, stroke = 0.2, aes(x = Pseudotime, y = -1.5)) +
+  geom_point(data = subset(data.usemod, data.usemod$CellType == "IFE"), shape = 21, size = 4, 
+             colour = "black", fill = color1, stroke = 0.2, aes(x = Pseudotime, y = -1.5)) +
+  geom_point(data = subset(data.usemod, data.usemod$CellType == "SCprogenitor"), shape = 21, size = 4, 
+             colour = "black", fill = color3, stroke = 0.2, aes(x = Pseudotime, y = -1.5)) +
+  geom_smooth(aes(Pseudotime, Bmp2), span = 0.75, method = "loess", color = color2) +
+  geom_smooth(aes(Pseudotime, Shh), span = 0.75, method = "loess", color = color2) +
+  geom_smooth(aes(Pseudotime, Nfatc1), span = 0.75, method = "loess", color = color3) +
+  geom_smooth(aes(Pseudotime, Sox9), span = 0.75, method = "loess", color = color3) +
+  geom_smooth(aes(Pseudotime, Wnt4), span = 0.75, method = "loess", color = color1) +
+  geom_smooth(aes(Pseudotime, Lmo1), span = 0.75, method = "loess", color = color1) +
+  scale_y_continuous(limits = c(-2, NA)) + xlab("Pseudotime") + ylab("expression")
+p
+```
+
+## Visualization 7 (Heatmap showing differentially expressed genes in pseudo-space)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load libraries
+suppressMessages(library(ComplexHeatmap))
+suppressMessages(library(scales))
+suppressMessages(library(viridis))
+suppressMessages(library(colorRamps))
+suppressMessages(library(cluster))
+suppressMessages(library(RColorBrewer))
+suppressMessages(library(circlize))
+```
+
+### Smoothing data (Loess smoothing)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Function for smoothing (Loess)
+smooth_gene_exp <- function(data = data, pseudotime = pseudotime, span = 0.75){
+    smooth_data <- data
+    genelist <- colnames(data)[-which(colnames(data) %in% c("cell", "pseudotime", "celltype"))]
+    for (gene in genelist){
+        #gene_exp <- t(data[gene,])
+        gene_exp <- data[, c(gene, "pseudotime")]
+        colnames(gene_exp) <- c("gene", "pseudotime")
+        smooth <- loess(formula = gene~pseudotime, data = gene_exp, span = span)
+        smooth_data[, gene] <- predict(smooth, newdata = pseudotime)
+    }
+    return(smooth_data)
+}
+
+# Get smoothing Data (Loess smoothing)
+pseudotime <- data.frame(cell = rownames(EWF.temp@meta.data), 
+                         pseudotime = EWF.temp@meta.data$Pseudotime, 
+                         celltype = EWF.temp@meta.data$CellType)
+rownames(pseudotime) <- pseudotime$cell
+
+data <- t(as.matrix(EWF.temp@assays$RNA@scale.data))
+data <- data.frame(data, cell = rownames(data))
+colnames(data) <- c(rownames(as.matrix(EWF.temp@assays$RNA@scale.data)), "cell")
+
+data2 <- merge(pseudotime, data, by = "cell", all = T)
+data2 <- data2[order(data2$pseudotime), ]
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+smooth_data <- smooth_gene_exp(data = data2, pseudotime = data2$pseudotime, span = 0.75)
+rownames(smooth_data) <- smooth_data$cell
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(smooth_data, "./output/E12epithelium_Pseudospace_smothing_All_loess_span075.obj")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+##Compare monocle results
+ht0 <- readRDS("./output/mmHairF_tpm_monocle_v2_E12epithelium_heatmap.obj")
+monocle_matrix <- t(ht0@matrix)
+monocle_matrix <- data.frame(monocle_matrix, pseudotime=rownames(monocle_matrix))
+colnames(monocle_matrix) <- c(rownames(ht0@matrix), "pseudotime")
+monocle_matrix <- monocle_matrix[order(monocle_matrix$pseudotime),]
+#corner(heatmap_matrix, corner = "topright")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=12, fig.height=3}
+g <- ggplot(smooth_data, aes(x = pseudotime, y = Sox9))
+g <- g + geom_line()
+
+g1 <- ggplot(data2, aes(x = pseudotime, y = Sox9))
+g1 <- g1 + geom_line()
+
+g2 <- ggplot(monocle_matrix, aes(x = pseudotime, y = Nfatc1, group = 1))
+g2 <- g2 + geom_line()
+
+plot_grid(g, g1, g2, labels = c("Smoothing","Original","Monocle"), ncol = 3)
+```
+
+
+### Load Differentially expressed genes in pseudo-space
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+diff_test_res_ps <- read.table("./output/E12epithelium_Pseudospace_DEG.txt")
+sig_gene_names <- row.names(subset(diff_test_res_ps, qval < 0.1))
+#length(sig_gene_names)
+```
+```{r, message=FALSE, warning=FALSE}
+##[1] 4342
+```
+
+### Make heatmap matrix
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Prepare heatmap matrix
+scale_rows = function(x){
+    m = apply(x, 1, mean, na.rm = T)
+    s = apply(x, 1, sd, na.rm = T)
+    return((x - m) / s)
+}
+
+heatmap_matrix <- as.matrix(t(smooth_data[, -which(colnames(smooth_data) %in% c("cell", "pseudotime", "celltype"))]))
+heatmap_matrix <- heatmap_matrix[sig_gene_names, ]
+heatmap_matrix <- scale_rows(heatmap_matrix)
+```
+
+### Make heatmap
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6}
+# Color
+cols <- rev(RColorBrewer::brewer.pal(11, "RdYlBu"))
+# Heatmap (test)
+test <- draw(Heatmap(heatmap_matrix, 
+                     use_raster = T,
+                     cluster_rows = TRUE,
+                     cluster_columns = FALSE,
+                     show_row_dend = FALSE,
+                     show_column_dend = FALSE,
+                     show_row_names = FALSE,
+                     show_column_names = FALSE,
+                     km = 20, 
+                     row_gap = unit(0.8, "mm"), 
+                     col = cols))
+```
+
+
+
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=4, fig.width=3, eval=FALSE}
+# Change order of genes in heatmap
+# Make row order
+o1 <- row_order(test)
+order_row <- c()
+for (i in 1:20){
+  order_row <- c(order_row, o1[[i]])
+}
+
+ordered_split <- c()
+for (i in 1:20){
+  ordered_split  <- c(ordered_split, rep(names(o1[i]), length(o1[[i]])))
+}
+ordered_split <- as.factor(ordered_split)
+ordered_split <- factor(ordered_split, levels = c("2", "3", "5", "1", "4", "7", "8", "6", "14", "13", "9", 
+                                                  "10", "12", "11", "18", "17", "20", "19", "16", "15"))
+
+# Make ordered heatmap
+ordered_heatmap_matrix <- test@ht_list$matrix_4@matrix[order_row, ]
+
+# Make top annotation
+hat <- HeatmapAnnotation(CellType = smooth_data$celltype, 
+                        #Pseudospace = smooth_data$pseudotime, 
+                        Space = anno_empty(border = FALSE),
+                        show_legend = c(FALSE, FALSE), 
+                        gap = unit(1, "mm"),
+                        annotation_height = unit(c(1, 0.1), c("null", "null")), height = unit(1, "cm"),
+                        show_annotation_name = FALSE,
+                        col = list(CellType = c("IFE" = "magenta", "placode" = "blue", 
+                                                "SCprogenitor" = "red", "Unknown" = "lightgrey")))
+
+
+# Make right annotation
+labels <- c("Sox21", "Bmp2", "Sp5", "Dkk4", "Shh", "Lrp4", "Wnt10b", "Ascl4", "Pthlh", "Gadd45g", "Lhx2", "Edar", 
+            "Smoc2", "Wif1", "Cdh3", "Ifitm3", "Nfatc1", "Sox9", "Sostdc1", "Lmo1", "Wnt7b", "Wnt4", "Krt15")
+position <- c()
+for (i in labels){
+  position <- c(position, which(is.element(rownames(ordered_heatmap_matrix), i) == TRUE))
+}
+har <- rowAnnotation(link = anno_mark(at = position, 
+                                      labels = labels, 
+                                      labels_gp = gpar(fontsize = 18, fontface="italic"), 
+                                      link_width = unit(1.5, "cm")))
+
+# Make left annotation
+hal <- rowAnnotation(foo = anno_block(gp = gpar(fill = "lightgrey")))
+
+# Color
+cols <- rev(brewer.pal(11, "RdYlBu"))
+
+# Heatmap (final)
+ht_reordered <- Heatmap(ordered_heatmap_matrix,
+    use_raster = T,
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    show_row_dend = FALSE,
+    show_column_dend = FALSE,
+    show_row_names = FALSE,
+    show_column_names = FALSE,
+    row_split = ordered_split,
+    row_gap = unit(1.5, "mm"), 
+    right_annotation = har,
+    left_annotation = hal,
+    top_annotation = hat,
+    heatmap_legend_param = list(title = "", legend_height = unit(6, "cm")),
+    row_title = c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"),
+    border = TRUE,
+    row_title_rot = 0,
+    col = cols)
+
+ht_reordered.fix <- draw(ht_reordered)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(ht_reordered.fix, "./output/mmHairF_tpm_E12epithelium_pseudospace_heatmap_fix.obj")
+```
+
+
+
+## Extraction of gene list in each cluster
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+clustered_heatmap_matrix <- data.frame(Cluster = ordered_split, gene = rownames(ordered_heatmap_matrix), ordered_heatmap_matrix)
+clustered_heatmap_matrix <- clustered_heatmap_matrix[order(clustered_heatmap_matrix$Cluster), ]
+
+gene.list <- list()
+for (i in c("2", "3", "5", "1", "4", "7", "8", "6", "14", "13", "9", "10", "12", "11", "18", "17", "20", "19", "16", "15")) {
+  data <- clustered_heatmap_matrix %>% dplyr::filter(Cluster == i)
+  gene.list[[i]] <- as.vector(data$gene)
+}
+names(gene.list) <- c("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9", "GC10", 
+                      "GC11", "GC12", "GC13", "GC14", "GC15", "GC16", "GC17", "GC18", "GC19", "GC20")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+sessionInfo()
+```
+

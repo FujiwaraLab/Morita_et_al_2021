@@ -1,0 +1,1032 @@
+---
+title: Analysis of scRNA-seq data 7
+author: <span style="font-style:italic"> Ritsuko Morita </span>
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: '5'
+    df_print: paged
+    css: ./style/style.css
+---
+
+# `r kableExtra::text_spec("Pseudo-time analysis", bold = TRUE)`
+Here, pseudo-time analysis with the basal epithelial fractions was performed with destiny and Slingshot. 
+This analysis was performed with reference to the script of Stévant I et.al., Cell Rep. 2019 (DOI: 10.1016/j.celrep.2019.02.069).
+
+## Data setup 
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+library(Seurat) # version 3.0.1
+library(useful) # Corner function
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(devtools)
+library(cowplot)
+library(lattice)
+library(latticeExtra)
+library(destiny)
+library(slingshot)
+library(monocle)
+library(RColorBrewer)
+
+# Load original functions
+source("./Src/Visualization_for_object_of_Seurat_v3.r")
+source("./Src/PseudotimeAnalysis.r")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Load dataset
+EWF0 <- readRDS("./output/mmHairF_tpm_Seurat_v3_epithelium_without_E12-01_scale10000.obj")
+```
+```{r, message=FALSE, warning=FALSE, fig.height=2, fig.width=5}
+# Extract only basal epithelial cells
+EWF <- SubsetData(EWF0, ident.use = c(0, 1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14), subset.raw = T)
+
+EWF@meta.data$Celltype <- as.character(EWF@active.ident)
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "0"), "E11.5")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "2"), "E12.0_placode")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "6"), "Infundibular")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "13"), "StalkCells")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "12"), "LowerSCs")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "10"), "UpperSCs")
+EWF@meta.data$Celltype <- replace(EWF@meta.data$Celltype, which(EWF@meta.data$Celltype == "14"), "HairGerm")
+
+EWF@meta.data$Celltype <- factor(EWF@meta.data$Celltype,
+                                 levels = c("E11.5", "1", "E12.0_placode", "5", "Infundibular", "7", "8", "9", 
+                                            "11", "StalkCells", "LowerSCs", "UpperSCs", "HairGerm"))
+```
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=10}
+plot_grid(myTSNEPlot(EWF0, do.label = T, no.rect = F, legend_ncol = 2, label.size = 5),
+          myTSNEPlot(EWF, do.label = T, no.rect = F, legend_ncol = 2, label.size = 5),
+          ncol = 2, align = "v")
+```
+
+## Diffusion map with destiny
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+find_sigmas(EWF@reductions$pca@cell.embeddings)
+
+EWF_dm <- run_diffMap(t(EWF@reductions$pca@cell.embeddings), EWF@meta.data$Celltype, sigma = 19, k = 20)
+
+plot_eigenVal(dm = EWF_dm)
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+plot_eigenVal(dm = EWF_dm)
+```
+
+
+## Slingshot
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+#Get lineage with slingshot
+EWF_lineage <- slingshot(EWF_dm@eigenvectors[, c(1:4)], 
+                         clusterLabels = factor(EWF@meta.data$Celltype), 
+                         start.clus = "E11.5", 
+                         end.clus = c("StalkCells", "LowerSCs", "UpperSCs", "Infundibular","HairGerm"), 
+                         maxit = 1000, shrink.method = "density", thresh = 0.001, extend = "n")
+
+#Get pseudotime with slingshot
+EWF_pseudotime <- get_pseudotime(EWF_lineage, wthres = 0.90)
+rownames(EWF_pseudotime) <- colnames(x = EWF)
+
+lineage1 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 1]), 1])
+lineage2 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 2]), 2])
+lineage3 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 3]), 3])
+lineage4 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 4]), 4])
+lineage5 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 5]), 5])
+```
+```{r, message=FALSE, warning=FALSE}
+length(lineage1)
+length(lineage2)
+length(lineage3)
+length(lineage4)
+length(lineage5)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+curves <- slingCurves(EWF_lineage)
+```
+
+
+## Visualization 1 (Results of DiffusionMap)
+```{r, message=FALSE, warning=FALSE}
+# Set colors
+hi.color <- c("0" = scales::hue_pal()(16)[1],
+              "1" = scales::hue_pal()(16)[2],
+              "2" = scales::hue_pal()(16)[3],
+              "5" = scales::hue_pal()(16)[6],
+              "6" = scales::hue_pal()(16)[7],
+              "7" = scales::hue_pal()(16)[8],
+              "8" = scales::hue_pal()(16)[9],
+              "9" = scales::hue_pal()(16)[10],
+              "10" = scales::hue_pal()(16)[11],
+              "11" = scales::hue_pal()(16)[12],
+              "12" = scales::hue_pal()(16)[13],
+              "13" = scales::hue_pal()(16)[14],
+              "14" = scales::hue_pal()(16)[15])
+
+hi.color2 <- c("E11.5" = scales::hue_pal()(16)[1],
+              "1" = scales::hue_pal()(16)[2],
+              "E12.0_placode" = scales::hue_pal()(16)[3],
+              "5" = scales::hue_pal()(16)[6],
+              "Infundibular" = scales::hue_pal()(16)[7],
+              "7" = scales::hue_pal()(16)[8],
+              "8" = scales::hue_pal()(16)[9],
+              "9" = scales::hue_pal()(16)[10],
+              "UpperSCs" = scales::hue_pal()(16)[11],
+              "11" = scales::hue_pal()(16)[12],
+              "LowerSCs" = scales::hue_pal()(16)[13],
+              "StalkCells" = scales::hue_pal()(16)[14],
+              "HairGerm" = scales::hue_pal()(16)[15])
+
+hi.color3 <- c(scales::hue_pal()(16)[1], scales::hue_pal()(16)[2], scales::hue_pal()(16)[3],
+              scales::hue_pal()(16)[6], scales::hue_pal()(16)[7], scales::hue_pal()(16)[8],
+              scales::hue_pal()(16)[9], scales::hue_pal()(16)[10], scales::hue_pal()(16)[11],
+              scales::hue_pal()(16)[12], scales::hue_pal()(16)[13], scales::hue_pal()(16)[14],
+              scales::hue_pal()(16)[15])
+stage.color <- c("#ff4000", "#ff8c00", "#ffe500", "#b2db11", "#1b9850", "#00d3cc", "#0188a8")
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Results of DiffusionMap
+splom(~EWF_dm@eigenvectors[, 1:5], groups = EWF@meta.data$Celltype, col = hi.color3, main = "", 
+      key = list(space="right", points = list(pch = 20, col = hi.color3), text = list(c(levels(EWF@meta.data$Celltype)))))
+```
+
+## Visualization 2 (3D DiffusionMap colored by Cluster)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Results of DiffusionMap in 3D  (colored by Cluster)
+plot_dm_3D(dm = EWF_dm, dc = c(1, 2, 4), condition = EWF@meta.data$Celltype, colour = hi.color2, size = 0.5)
+rgl::lines3d(x = curves$curve1$s[curves$curve1$ord, 1], 
+             y = curves$curve1$s[curves$curve1$ord, 2], 
+             z = curves$curve1$s[curves$curve1$ord, 4], add = TRUE, lwd = 5)
+```
+
+## Visualization 3 (3D DiffusionMap in 2D, colored by Cluster)
+```{r, message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+# 3D DiffusionMap in 2D (colored by Cluster)
+plot_dm_3D_in_2D(dm = EWF_dm, dc = c(1, 2, 4), condition = EWF@active.ident, 
+                 colour = hi.color, size = 1, theta = 90, phi = 210, pch = 21, bty = "g")
+scatter3D(x = curves$curve1$s[curves$curve1$ord, 1], 
+          y = curves$curve1$s[curves$curve1$ord, 2], 
+          z = curves$curve1$s[curves$curve1$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve2$s[curves$curve2$ord, 1], 
+          y = curves$curve2$s[curves$curve2$ord, 2], 
+          z = curves$curve2$s[curves$curve2$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve3$s[curves$curve3$ord, 1], 
+          y = curves$curve3$s[curves$curve3$ord, 2], 
+          z = curves$curve3$s[curves$curve3$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve4$s[curves$curve4$ord, 1], 
+          y = curves$curve4$s[curves$curve4$ord, 2], 
+          z = curves$curve4$s[curves$curve4$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve5$s[curves$curve5$ord, 1], 
+          y = curves$curve5$s[curves$curve5$ord, 2], 
+          z = curves$curve5$s[curves$curve5$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+```
+
+
+## Visualization 4 (3D DiffusionMap in 2D, colored by Stage)
+```{r, message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+# 3D DiffusionMap in 2D (colored by Stage)
+plot_dm_3D_in_2D(dm = EWF_dm, dc = c(1, 2, 4), condition = EWF@meta.data$stage, 
+                 colour = stage.color, size = 1, theta = 90, phi = 210, 
+                 pch = 21, bty = "g")
+scatter3D(x = curves$curve1$s[curves$curve1$ord, 1], 
+          y = curves$curve1$s[curves$curve1$ord, 2], 
+          z = curves$curve1$s[curves$curve1$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve2$s[curves$curve2$ord, 1], 
+          y = curves$curve2$s[curves$curve2$ord, 2], 
+          z = curves$curve2$s[curves$curve2$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve3$s[curves$curve3$ord, 1], 
+          y = curves$curve3$s[curves$curve3$ord, 2], 
+          z = curves$curve3$s[curves$curve3$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve4$s[curves$curve4$ord, 1], 
+          y = curves$curve4$s[curves$curve4$ord, 2], 
+          z = curves$curve4$s[curves$curve4$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+scatter3D(x = curves$curve5$s[curves$curve5$ord, 1], 
+          y = curves$curve5$s[curves$curve5$ord, 2], 
+          z = curves$curve5$s[curves$curve5$ord, 4], 
+          col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+```
+
+
+## Visualization 5 (Highlighting each linage on tSNEplot)
+```{r, message=FALSE, warning=FALSE}
+glist <- list()
+celllist <- list(names(lineage1), names(lineage2),names(lineage3), names(lineage4),names(lineage5))
+for (i in 1:5){
+  cell.use.s <- celllist[[i]]
+  title <- paste("Branch", i, sep="")
+  g <- highlight_cells_per_lineage_tSNEplot(EWF0, highlight.cells = cell.use.s, hi.color = hi.color, title = title)
+  glist[[i]] <- g
+}
+```
+```{r, message=FALSE, warning=FALSE, fig.height=8, fig.width=20}
+plot_grid(glist[[1]], glist[[2]], glist[[3]], glist[[4]], glist[[5]], ncol = 3)
+```
+
+
+## Visualization 6 (Highlighting each linage on 3D DiffusionMap)
+```{r, message=FALSE, warning=FALSE}
+glist <- list()
+celllist <- list(names(lineage1), names(lineage2), names(lineage3), names(lineage4), names(lineage5))
+for (i in 1:5){
+  cell.use.s <- celllist[[i]]
+  title <- paste("Branch", i, sep="")
+  g <- highlight_cells_per_lineage_dmplot3D(object = EWF, dm = EWF_dm, dc = c(1, 2, 4), 
+                                            condition = EWF@active.ident, colours = hi.color,
+                                            highlight.cells = cell.use.s, theta = 90, phi = 190, bty = "n", title = title)
+  g <- g + scatter3D(x = curves$curve1$s[curves$curve1$ord, 1],
+                     y = curves$curve1$s[curves$curve1$ord, 2],
+                     z = curves$curve1$s[curves$curve1$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve2$s[curves$curve2$ord, 1],
+                     y = curves$curve2$s[curves$curve2$ord, 2],
+                     z = curves$curve2$s[curves$curve2$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve3$s[curves$curve3$ord, 1],
+                     y = curves$curve3$s[curves$curve3$ord, 2],
+                     z = curves$curve3$s[curves$curve3$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve4$s[curves$curve4$ord, 1],
+                     y = curves$curve4$s[curves$curve4$ord, 2],
+                     z = curves$curve4$s[curves$curve4$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve5$s[curves$curve5$ord, 1],
+                     y = curves$curve5$s[curves$curve5$ord, 2],
+                     z = curves$curve5$s[curves$curve5$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  glist[[i]] <- g
+}
+```
+
+## Visualization 7 (Highlighting each stage on 3D DiffusionMap)
+```{r, message=FALSE, warning=FALSE}
+glist <- list()
+stagelist <- list("E11.5", "E12.0", "E13.0", "E13.5", "E14.0", "E15.0", "E17.0")
+
+for (i in 1:7){
+  highlight.stage <- stagelist[[i]]
+  highlight.data <- data.frame(Cell = row.names(EWF@reductions$pca@cell.embeddings), Stage = EWF@meta.data$stage)
+  data2 <- subset(highlight.data, highlight.data$Stage %in%　highlight.stage)
+
+  g <- highlight_cells_per_lineage_dmplot3D(object = EWF, dm = EWF_dm, dc = c(1, 2, 4), condition = EWF@meta.data$stage,
+                                            colours = stage.color, highlight.cells = data2$Cell, add.curve = NULL, 
+                                            theta = 90, phi = 190, bty = "n", title = highlight.stage)
+  g <- g + scatter3D(x = curves$curve1$s[curves$curve1$ord, 1],
+                     y = curves$curve1$s[curves$curve1$ord, 2],
+                     z = curves$curve1$s[curves$curve1$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve2$s[curves$curve2$ord, 1],
+                     y = curves$curve2$s[curves$curve2$ord, 2],
+                     z = curves$curve2$s[curves$curve2$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve3$s[curves$curve3$ord, 1],
+                     y = curves$curve3$s[curves$curve3$ord, 2],
+                     z = curves$curve3$s[curves$curve3$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve4$s[curves$curve4$ord, 1],
+                     y = curves$curve4$s[curves$curve4$ord, 2],
+                     z = curves$curve4$s[curves$curve4$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve5$s[curves$curve5$ord, 1],
+                     y = curves$curve5$s[curves$curve5$ord, 2],
+                     z = curves$curve5$s[curves$curve5$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  glist[[i]] <- g
+}
+```
+
+## Visualization 8 (3D FeaturePlot with rgl)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+gene <- "Shh"
+myFeaturePlot3D(EWF_dm@eigenvectors, EWF, c("DC1", "DC2", "DC4"), gene)
+plot3d(EWF_lineage, dim = c(1, 2, 4), add = TRUE, lwd = 5)
+```
+
+## Visualization 9 (3D FeaturePlot in 2D)
+```{r, message=FALSE, warning=FALSE}
+glist <- list()
+genelist <- list("BC100530", "Vsig8", "Tgfbi", "Vdr", "Shh")
+for (i in 1:5){
+  gene.use.s <- genelist[[i]]
+  g <- myFeaturePlot3D_in_Plot2D(dataframe = EWF_dm@eigenvectors, object = EWF, DCno = c("DC1", "DC2", "DC4"), 
+                                 features.use = gene.use.s, theta = 90, phi = 190, bty = "n")
+  g <- g + scatter3D(x = curves$curve1$s[curves$curve1$ord, 1],
+                     y = curves$curve1$s[curves$curve1$ord, 2],
+                     z = curves$curve1$s[curves$curve1$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve2$s[curves$curve2$ord, 1],
+                     y = curves$curve2$s[curves$curve2$ord, 2],
+                     z = curves$curve2$s[curves$curve2$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve3$s[curves$curve3$ord, 1],
+                     y = curves$curve3$s[curves$curve3$ord, 2],
+                     z = curves$curve3$s[curves$curve3$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve4$s[curves$curve4$ord, 1],
+                     y = curves$curve4$s[curves$curve4$ord, 2],
+                     z = curves$curve4$s[curves$curve4$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  g <- g + scatter3D(x = curves$curve5$s[curves$curve5$ord, 1],
+                     y = curves$curve5$s[curves$curve5$ord, 2],
+                     z = curves$curve5$s[curves$curve5$ord, 4], 
+                     col = "black", type = "l", ticktype = "detailed", lwd = 4, add = TRUE)
+  glist[[i]] <- g
+}
+```
+
+## Multi-way heatmap showing pseudotemporal gene expression changes for each of the five branches
+### Export pseudotime into monocle object
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Prepare monocle object
+data <- GetAssayData(object = EWF, slot = "counts")
+data <- as(as.matrix(data), "sparseMatrix")
+pd <- new("AnnotatedDataFrame", data = EWF@meta.data)
+data <- data[, rownames(pd)]
+fData <- data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+fd <- new("AnnotatedDataFrame", data = fData)
+
+# First create a CellDataSet from the relative expression levels
+EWF.monocle <- newCellDataSet(as.matrix(EWF@assays$RNA@counts),
+                              phenoData = pd,
+                              featureData = fd,
+                              lowerDetectionLimit = 0.1,
+                              expressionFamily = tobit(Lower = 0.1))
+# Next, use it to estimate RNA counts
+rpc_matrix <- relative2abs(EWF.monocle, method = "num_genes")
+
+# Now, make a new CellDataSet using the RNA counts
+EWF.monocle <- newCellDataSet(as(as.matrix(rpc_matrix), "sparseMatrix"),
+                              phenoData = pd,
+                              featureData = fd,
+                              lowerDetectionLimit = 0.5,
+                              expressionFamily = negbinomial.size())
+
+EWF.monocle <- estimateSizeFactors(EWF.monocle)
+EWF.monocle <- estimateDispersions(EWF.monocle)
+
+EWF.monocle <- detectGenes(EWF.monocle, min_expr = 0.1)
+pData(EWF.monocle)$Total_mRNAs <- Matrix::colSums(exprs(EWF.monocle))
+
+EWF.monocle <- setOrderingFilter(EWF.monocle, VariableFeatures(object = EWF))
+plot_ordering_genes(EWF.monocle)
+
+disp_table <- dispersionTable(EWF.monocle)
+unsup_clustering_genes <- subset(disp_table, mean_expression >= 0.1)
+EWF.monocle <- setOrderingFilter(EWF.monocle, unsup_clustering_genes$gene_id)
+plot_ordering_genes(EWF.monocle)
+
+EWF.monocle <- reduceDimension(EWF.monocle, max_components = 2, num_dim = 6, reduction_method = 'tSNE', verbose = T)
+EWF.monocle <- clusterCells(EWF.monocle, num_clusters = 16)
+plot_cell_clusters(EWF.monocle, 1, 2, color = "stage",  markers = c("Shh", "Vsig8", "Fbn2","Tgfbi", "Smtn", "Nfatc1"))
+plot_cell_clusters(EWF.monocle, 1, 2, color = "stage")
+plot_cell_clusters(EWF.monocle, 1, 2, color = "Cluster")
+```
+
+### Detection of lineage-dependent expression patterns by BEAM in Monocle2
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+lineage1 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 1]), 1])
+lineage2 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 2]), 2])
+lineage3 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 3]), 3])
+lineage4 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 4]), 4])
+lineage5 <- sort(EWF_pseudotime[!is.na(EWF_pseudotime[, 5]), 5])
+
+ordered_lineage1 <- lineage1[order(lineage1, decreasing = FALSE)]
+ordered_lineage2 <- lineage2[order(lineage2, decreasing = FALSE)]
+ordered_lineage3 <- lineage3[order(lineage3, decreasing = FALSE)]
+ordered_lineage4 <- lineage4[order(lineage4, decreasing = FALSE)]
+ordered_lineage5 <- lineage5[order(lineage5, decreasing = FALSE)]
+paths_to_root <- list(ordered_lineage1, ordered_lineage2, ordered_lineage3, ordered_lineage4, ordered_lineage5)
+
+all_cells_in_subset <- unique(c(names(ordered_lineage1), names(ordered_lineage2), names(ordered_lineage3),
+                                names(ordered_lineage4), names(ordered_lineage5)))
+
+pseudotime_path <- list()
+for (i in 1:length(paths_to_root)) {
+  pseudotime_path[[i]] <- 0:(length(paths_to_root[[i]]) - 1)
+  names(pseudotime_path[[i]]) <- names(paths_to_root[[i]])
+  pseudotime_path[[i]] <- 100 * pseudotime_path[[i]] / max(pseudotime_path[[i]])
+}
+
+cds0 <- EWF.monocle
+cds <- cds0[, row.names(pData(cds0[, all_cells_in_subset]))]
+
+pseudotime_path <- list()
+for (i in 1:length(paths_to_root)) {
+  pseudotime_path[[i]] <- 0:(length(paths_to_root[[i]]) - 1)
+  names(pseudotime_path[[i]]) <- names(paths_to_root[[i]])
+  pseudotime_path[[i]] <- 100 * pseudotime_path[[i]] / max(pseudotime_path[[i]])
+}
+
+expr_blocks <- list()
+for (i in 1:length(paths_to_root)) { #duplicate each branch
+  dupli_exprs <- exprs(cds)[, names(paths_to_root[[i]])]
+  #exprs_data <- t(as.matrix(dupli_exprs))
+  exprs_data <- as.matrix(dupli_exprs)
+  colnames(exprs_data) <- paste('duplicate', i, 1:length(names(paths_to_root[[i]])), sep = '_')
+  expr_blocks[[i]] <- exprs_data
+}
+
+pData <- pData(cds)
+pData$original_cell_id <- row.names(pData)
+pData_blocks <- list()
+for (i in 1:length(paths_to_root)) { #duplicate progenitors for multiple branches
+  dupli_pData <- pData[names(paths_to_root[[i]]), ]
+  rownames(dupli_pData) <- paste('duplicate', i, 1:length(names(paths_to_root[[i]])), sep = '_')
+  dupli_pData$Pseudotime <- pseudotime_path[[i]]
+  dupli_pData$Branch <- paste('Branch', i, sep = '_')
+  pData_blocks[[i]] <- dupli_pData
+}
+
+pData <- do.call(rbind, pData_blocks)
+exprs_data <- do.call(cbind, expr_blocks)
+
+pData$Branch <- as.factor(pData$Branch)
+#pData$State <- factor(pData$State)
+Size_Factor <- pData$Size_Factor
+
+fData <- fData(cds)
+  
+colnames(exprs_data) <- row.names(pData) #check this 
+cds_subset <- newCellDataSet(as.matrix(exprs_data),
+                            phenoData = new("AnnotatedDataFrame", data = pData),
+                            featureData = new("AnnotatedDataFrame", data = fData),
+                            expressionFamily = cds@expressionFamily,
+                            lowerDetectionLimit = cds@lowerDetectionLimit)
+#pData(cds_subset)$State <- as.factor(pData(cds_subset)$State)
+pData(cds_subset)$Size_Factor <- Size_Factor
+  
+cds_subset@dispFitInfo <- cds@dispFitInfo
+  
+dupli_cds <- cds_subset
+
+cds <- dupli_cds
+fullModelFormulaStr <- "~sm.ns(Pseudotime, df = 3)*Branch"
+reducedModelFormulaStr <- "~sm.ns(Pseudotime, df = 3)"
+relative_expr <- TRUE
+cores <- 1
+verbose <- FALSE
+
+cds_subset <- dupli_cds
+branchTest_res <- differentialGeneTest(cds_subset,
+                                       fullModelFormulaStr = fullModelFormulaStr,
+                                       reducedModelFormulaStr = reducedModelFormulaStr,
+                                       cores = cores,
+                                       relative_expr = relative_expr,
+                                       verbose = verbose)
+
+cmbn_df <- branchTest_res[, 1:4]
+fd <- fData(cds)[row.names(cmbn_df), ]
+cmbn_df <- cbind(cmbn_df, fd)
+
+BEAM.resALL <- cmbn_df
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(BEAM.resALL, "./output/BEAM_resALL.obj")
+```
+
+### Make heatmap using Monocle2
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+cds_subset <- dupli_cds[row.names(subset(BEAM.resALL, qval < 1e-4)),]
+hclust_method <- "ward.D2"
+hmcols <- NULL
+branch_colors <- scales::viridis_pal()(5)
+scale_max <- 3
+scale_min <- -3
+norm_method <- "log" #c("log", "vstExprs")
+trend_formula <- '~sm.ns(Pseudotime, df=3) * Branch'
+cores <- 1
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+new_cds <- cds_subset
+col_gap_ind <- c(101, 201, 301, 401)
+
+newdata <- list()
+for (i in 1:length(paths_to_root)) { #duplicate progenitors for multiple branches
+  newdata[[i]] <- data.frame(Pseudotime = seq(0, 100, length.out = 100), 
+                             Branch = as.factor(unique(as.character(pData(new_cds)$Branch))[i]))
+}
+
+newdata.all <- do.call(rbind, newdata)
+
+BranchALL_exprs <- genSmoothCurves(new_cds[, ], cores = cores, trend_formula = trend_formula,
+relative_expr = T, new_data = newdata.all)
+
+Branch1_exprs <- BranchALL_exprs[, 1:100]
+Branch2_exprs <- BranchALL_exprs[, 101:200]
+Branch3_exprs <- BranchALL_exprs[, 201:300]
+Branch4_exprs <- BranchALL_exprs[, 301:400]
+Branch5_exprs <- BranchALL_exprs[, 401:500]
+
+if(norm_method == 'vstExprs') {
+  Branch1_exprs <- vstExprs(new_cds, expr_matrix=Branch1_exprs)
+  Branch2_exprs <- vstExprs(new_cds, expr_matrix=Branch2_exprs)
+  Branch3_exprs <- vstExprs(new_cds, expr_matrix=Branch3_exprs)
+  Branch4_exprs <- vstExprs(new_cds, expr_matrix=Branch4_exprs)
+  Branch5_exprs <- vstExprs(new_cds, expr_matrix=Branch5_exprs)
+  } else if(norm_method == 'log') {
+    Branch1_exprs <- log10(Branch1_exprs + 1)
+    Branch2_exprs <- log10(Branch2_exprs + 1)
+    Branch3_exprs <- log10(Branch3_exprs + 1)
+    Branch4_exprs <- log10(Branch4_exprs + 1)
+    Branch5_exprs <- log10(Branch5_exprs + 1)
+    }
+
+heatmap_matrix <- cbind(Branch1_exprs, Branch2_exprs, Branch3_exprs, Branch4_exprs, Branch5_exprs)
+    
+heatmap_matrix <- heatmap_matrix[!apply(heatmap_matrix, 1, sd)==0,]
+heatmap_matrix <- Matrix::t(scale(Matrix::t(heatmap_matrix),center=TRUE))
+heatmap_matrix <- heatmap_matrix[is.na(row.names(heatmap_matrix)) == FALSE,]
+heatmap_matrix[is.nan(heatmap_matrix)] <- 0
+heatmap_matrix[heatmap_matrix>scale_max] <- scale_max
+heatmap_matrix[heatmap_matrix<scale_min] <- scale_min
+    
+heatmap_matrix_ori <- heatmap_matrix
+heatmap_matrix <- heatmap_matrix[is.finite(heatmap_matrix[, 1]) 
+                                 & is.finite(heatmap_matrix[, col_gap_ind[1]])
+                                 & is.finite(heatmap_matrix[, col_gap_ind[2]])
+                                 & is.finite(heatmap_matrix[, col_gap_ind[3]])
+                                 & is.finite(heatmap_matrix[, col_gap_ind[4]]), ] 
+#remove the NA fitting failure genes for each branch
+
+row_dist <- as.dist((1 - cor(Matrix::t(heatmap_matrix))) / 2)
+row_dist[is.na(row_dist)] <- 1
+    
+exp_rng <- range(heatmap_matrix) #bks is based on the expression range
+bks <- seq(exp_rng[1] - 0.1, exp_rng[2] + 0.1, by = 0.1)
+if(is.null(hmcols)) {
+  hmcols <- colorRamps::blue2green2red(length(bks) - 1)
+}
+
+newdata_for_anno <- list()
+for (i in 1:length(paths_to_root)) { #duplicate progenitors for multiple branches
+  newdata_for_anno[[i]] <- data.frame(Pseudotime = seq(0, 100, length.out = 100), 
+                                      Branch = as.factor(unique(as.character(pData(new_cds)$Branch))[i]))
+}
+
+newdata_for_anno <- do.call(rbind, newdata_for_anno)
+
+branch_colors <- scales::hue_pal()(5) #scales::viridis_pal(option = "C")(5)
+#Pseudotime_colors = scales::viridis_pal()(100)
+annotation_colors <- list(#"Pseudotime"=Pseudotime_colors,
+  Branch=branch_colors)
+names(annotation_colors$Branch) <- levels(newdata_for_anno$Branch)
+
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+library(pheatmap)
+ph <- pheatmap(heatmap_matrix,
+    useRaster = T,
+    cluster_cols = FALSE,
+    cluster_rows = TRUE,
+    show_rownames = F,
+    show_colnames = F,
+    clustering_distance_rows = row_dist,
+    clustering_method = hclust_method,
+    cutree_rows = 13,
+    gaps_col = col_gap_ind,
+    filename = NA,
+    breaks = bks,
+    annotation_col = as.data.frame(newdata_for_anno$Branch), #newdata_for_anno,
+    annotation_colors = annotation_colors,
+    color = hmcols
+    )
+monocle_heatmap_matrix <- heatmap_matrix
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+library(ComplexHeatmap)
+ht <- Heatmap(monocle_heatmap_matrix,
+    use_raster = T,
+    cluster_rows = TRUE,
+    cluster_columns = FALSE,
+    show_row_dend = FALSE,
+    show_column_dend = FALSE,
+    show_row_names = FALSE,
+    show_column_names = FALSE,
+    column_split = newdata_for_anno$Branch,
+    column_gap = unit(0.8, "mm"),
+    #row_split = SubsetGeneList$cluster,
+    row_km = 13,
+    row_gap = unit(0.8, "mm"),
+    #heatmap_legend_param = list(title = "",
+    #legend_height = unit(6, "cm"), at = c(disp.min, -2, -1, 0, 1, 2, disp.max)),
+    #top_annotation = annotation_col,
+    #left_annotation = annotation_row,
+    col = hmcols)
+
+labels <- c("Wnt9b", "Wnt7b", "Nell2", "Edar", "Wnt10b", "Shh", "Ly6d", "Krt80", "Krt6a", "Krt1", "Aqp3", "BC100530", "Tgfb2", 
+            "Nfatc1", "Fbn2", "Vsig8", "Tgfbi", "Shisa2", "Smtn", "Vdr", "Ncam1", "Tgfb2", "Foxe1", "Specc1", "Fn1")
+position <- which(is.element(rownames(heatmap_matrix),labels) == TRUE)
+label2 <- rownames(heatmap_matrix)[position]
+
+draw(ht + rowAnnotation(link = anno_mark(at = position, labels = label2),
+                        width = unit(1, "cm") + max_text_width(label2, gp = gpar(fontsize = 25, fontface = "italic"))))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(ht, "./output/AllEpithelialCells_pseudotime_DEGs_heatmap_monocle.obj")
+```
+
+### Smoothing data by loess
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+data <- t(as.matrix(EWF@assays$RNA@scale.data))
+data <- data.frame(data, cell = rownames(data))
+colnames(data) <- c(rownames(as.matrix(EWF@assays$RNA@scale.data)), "cell")
+
+sampleinfo <- data.frame(stage = EWF@meta.data$stage_new, plate = EWF@meta.data$plate, 
+                         celltype = EWF@meta.data$Celltype, cluster = EWF@active.ident)
+
+# Function for smoothing data
+smooth_gene_exp <- function(data = data, pseudotime = pseudotime, span = 0.75){
+    smooth_data <- data
+    genelist <- colnames(data)[-which(colnames(data) %in% c("cell", "pseudotime", "celltype", "stage", "plate", "cluster"))]
+    for (gene in genelist){
+        #gene_exp <- t(data[gene,])
+        gene_exp <- data[, c(gene,"pseudotime")]
+        colnames(gene_exp) <- c("gene", "pseudotime")
+        smooth <- loess(formula = gene~pseudotime, data = gene_exp, span = span)
+        smooth_data[, gene] <- predict(smooth, newdata = pseudotime)
+    }
+    return(smooth_data)
+}
+
+# Make smoothing data (lineage 1)
+lineage1_cells <- names(lineage1)
+pseudotimeinfo1 <- data.frame(cell = lineage1_cells, pseudotime = lineage1, sampleinfo[lineage1_cells, ])
+data1 <- merge(pseudotimeinfo1, data[lineage1_cells, ], by = "cell", all = T)
+data1 <- data1[order(data1$pseudotime), ]
+rownames(data1) <- data1$cell
+# Smoothing
+smooth_data1 <- smooth_gene_exp(data = data1, pseudotime = data1$pseudotime, span = 0.75)
+rownames(smooth_data1) <- smooth_data1$cell
+
+# Make smoothing data (lineage 2)
+lineage2_cells <- names(lineage2)
+pseudotimeinfo2 <- data.frame(cell = lineage2_cells, pseudotime = lineage2, sampleinfo[lineage2_cells, ])
+data2 <- merge(pseudotimeinfo2, data[lineage2_cells, ], by = "cell", all = T)
+data2 <- data2[order(data2$pseudotime), ]
+rownames(data2) <- data2$cell
+# Smoothing
+smooth_data2 <- smooth_gene_exp(data = data2, pseudotime = data2$pseudotime, span = 0.75)
+rownames(smooth_data2) <- smooth_data2$cell
+
+# Make smoothing data (lineage 3)
+lineage3_cells <- names(lineage3)
+pseudotimeinfo3 <- data.frame(cell = lineage3_cells, pseudotime = lineage3, sampleinfo[lineage3_cells, ])
+data3 <- merge(pseudotimeinfo3, data[lineage3_cells, ], by = "cell", all = T)
+data3 <- data3[order(data3$pseudotime), ]
+rownames(data3) <- data3$cell
+# Smoothing
+smooth_data3 <- smooth_gene_exp(data = data3, pseudotime = data3$pseudotime, span = 0.75)
+rownames(smooth_data3) <- smooth_data3$cell
+
+# Make smoothing data (lineage 4)
+lineage4_cells <- names(lineage4)
+pseudotimeinfo4 <- data.frame(cell = lineage4_cells, pseudotime = lineage4, sampleinfo[lineage4_cells, ])
+data4 <- merge(pseudotimeinfo4, data[lineage4_cells, ], by = "cell", all = T)
+data4 <- data4[order(data4$pseudotime), ]
+rownames(data4) <- data4$cell
+# Smoothing
+smooth_data4 <- smooth_gene_exp(data = data4, pseudotime = data4$pseudotime, span = 0.75)
+rownames(smooth_data4) <- smooth_data4$cell
+
+# Make smoothing data (lineage 5)
+lineage5_cells <- names(lineage5)
+pseudotimeinfo5 <- data.frame(cell = lineage5_cells, pseudotime = lineage5, sampleinfo[lineage5_cells, ])
+data5 <- merge(pseudotimeinfo5, data[lineage5_cells, ], by = "cell", all = T)
+data5 <- data5[order(data5$pseudotime), ]
+rownames(data5) <- data5$cell
+# Smoothing
+smooth_data5 <- smooth_gene_exp(data = data5, pseudotime = data5$pseudotime, span = 0.75)
+rownames(smooth_data5) <- smooth_data5$cell
+
+# Bind all smoothing dataset
+smooth_data10 <- data.frame(pseudotime2 = smooth_data1$pseudotime, 
+                            lineage = rep("lineage1", length(smooth_data1$cell)), smooth_data1)
+colnames(smooth_data10) <- c("pseudotime2", "lineage", colnames(smooth_data1))
+
+smooth_data20 <- data.frame(pseudotime2 = smooth_data2$pseudotime + length(names(lineage1)), 
+                            lineage = rep("lineage2", length(smooth_data2$cell)), smooth_data2)
+colnames(smooth_data20) <- c("pseudotime2", "lineage", colnames(smooth_data2))
+
+smooth_data30 <- data.frame(pseudotime2 = smooth_data3$pseudotime + length(names(lineage1)) + length(names(lineage2)), 
+                            lineage = rep("lineage3", length(smooth_data3$cell)), smooth_data3)
+colnames(smooth_data30) <- c("pseudotime2", "lineage", colnames(smooth_data3))
+
+smooth_data40 <- data.frame(pseudotime2 = smooth_data4$pseudotime + length(names(lineage1)) + 
+                              length(names(lineage2)) + length(names(lineage3)), 
+                            lineage = rep("lineage4", length(smooth_data4$cell)), smooth_data4)
+colnames(smooth_data40) <- c("pseudotime2", "lineage", colnames(smooth_data4))
+
+smooth_data50 <- data.frame(pseudotime2 = smooth_data5$pseudotime + length(names(lineage1)) + 
+                              length(names(lineage2)) + length(names(lineage3)) + length(names(lineage4)), 
+                            lineage = rep("lineage5", length(smooth_data5$cell)), smooth_data5)
+colnames(smooth_data50) <- c("pseudotime2", "lineage", colnames(smooth_data5))
+
+smooth_dataAll <- rbind(smooth_data10, 
+                        smooth_data20[, colnames(smooth_data10)], 
+                        smooth_data30[, colnames(smooth_data10)],  
+                        smooth_data40[, colnames(smooth_data10)], 
+                        smooth_data50[, colnames(smooth_data10)])
+```
+```{r, message=FALSE, warning=FALSE}
+TotalNo <- length(names(lineage1)) + length(names(lineage2)) + length(names(lineage3)) + 
+  length(names(lineage4)) + length(names(lineage5))
+TotalNo
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(smooth_dataAll, "./output/AllEpithelialCells_Pseudotime_smoothing_data_ALLlineage")
+```
+
+### Check smoothing data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+## Original data for comparison
+data.ori <- list()
+for(i in smooth_dataAll$cell){
+  data.ori <- rbind(data.ori, data[i,])
+}
+data.ori <- data.frame(pseudotime=1:TotalNo, data.ori)
+colnames(data.ori) <- c("pseudotime", colnames(data))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+## Monocle results for comparison
+monocle_matrix <- data.frame(pseudotime=1:500, t(monocle_heatmap_matrix))
+```
+
+```{r, message=FALSE, warning=FALSE, fig.width=6, fig.height=10}
+g <- ggplot(smooth_dataAll, aes(x = pseudotime2, y = Sox9))
+g <- g + geom_line()
+
+g1 <- ggplot(data.ori, aes(x = pseudotime, y = Sox9))
+g1 <- g1 + geom_line()
+
+g2 <- ggplot(monocle_matrix, aes(x = pseudotime, y = Sox9, group = 1))
+g2 <- g2 + geom_line()
+
+plot_grid(g, g1, g2, labels = c("Smoothing", "Original", "Monocle"), nrow = 3)
+```
+
+### Scaling data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+## Method 1
+scale_max <- 3
+scale_min <- -3
+
+heatmap_matrix <- t(smooth_dataAll[, -1:-8])
+    
+heatmap_matrix <- heatmap_matrix[!apply(heatmap_matrix, 1, sd)==0, ]
+heatmap_matrix <- Matrix::t(scale(Matrix::t(heatmap_matrix),center=TRUE))
+heatmap_matrix <- heatmap_matrix[is.na(row.names(heatmap_matrix)) == FALSE, ]
+heatmap_matrix[is.nan(heatmap_matrix)] <- 0
+heatmap_matrix[heatmap_matrix>scale_max] <- scale_max
+heatmap_matrix[heatmap_matrix<scale_min] <- scale_min
+```
+
+### Determine order of genes in heatmap
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+ht <- readRDS("./output/AllEpithelialCells_pseudotime_DEGs_heatmap_monocle.obj")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+o1 <- row_order(ht)
+order_row <- c()
+for (i in 1:13){
+  order_row <- c(order_row, o1[[i]])
+}
+
+ordered_split <- c()
+for (i in 1:13){
+  ordered_split  <- c(ordered_split, rep(names(o1[i]), length(o1[[i]])))
+}
+ordered_split <- as.factor(ordered_split)
+ordered_split <- factor(ordered_split, levels = c("11", "13", "12", "10", "9", "4", "1", "7", "8", "6", "3", "5", "2"))
+
+ordered_heatmap_matrix <- heatmap_matrix[rownames(ht@matrix), ]
+ordered_heatmap_matrix <- ordered_heatmap_matrix[order_row, ]
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+test <- draw(Heatmap(ordered_heatmap_matrix,
+                     use_raster = T,
+                     cluster_rows = FALSE,
+                     cluster_columns = FALSE,
+                     show_row_dend = FALSE,
+                     show_column_dend = FALSE,
+                     show_row_names = FALSE,
+                     show_column_names = FALSE,
+                     row_split = ordered_split,
+                     row_gap = unit(0.8, "mm"), 
+                     col = cols))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Save clustered heatmap matrix 2
+clustered_heatmap_matrix <- data.frame(Cluster = ordered_split, 
+                                       gene = rownames(ordered_heatmap_matrix), 
+                                       ordered_heatmap_matrix)
+clustered_heatmap_matrix <- clustered_heatmap_matrix[order(clustered_heatmap_matrix$Cluster), ]
+corner(clustered_heatmap_matrix)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(clustered_heatmap_matrix, "./output/All_pseudo_DEG_heatmap_clustered_matrix.obj")
+```
+
+### Visulazation (final)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+smooth_dataAll <- readRDS("./output/smoothing_data_lineageALL.obj")
+clustered_heatmap_matrix <- readRDS("./output/All_pseudo_DEG_heatmap_clustered_matrix.obj")
+ordered_heatmap_matrix <- clustered_heatmap_matrix[, c(-1,-2)]
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Make color pallet
+cols <- rev(brewer.pal(11,"RdYlBu"))
+
+# Make right annotation
+labels0 <- c("Wnt9b", "Wnt7b", "Nell2", "Edar", "Wnt10b", "Shh", "Aqp3", "BC100530", "Tgfb2", "Nfatc1",
+             "Fbn2", "Vsig8", "Tgfbi", "Shisa2", "Smtn", "Vdr", "Ncam1", "Tgfb2", "Foxe1", "Specc1", "Fn1")
+labels <- intersect(labels0, rownames(ordered_heatmap_matrix))
+position <- c()
+for (i in labels){
+  position <- c(position, which(is.element(rownames(ordered_heatmap_matrix), i) == TRUE))
+}
+har <- rowAnnotation(link = anno_mark(at = position, labels = labels, 
+                                     labels_gp = gpar(fontsize = 18, fontface = "italic"), link_width = unit(1.5, "cm")))
+
+# Make left annotation
+hal <- rowAnnotation(foo = anno_block(gp = gpar(fill = "lightgrey")))
+
+# Make top annotation
+library(circlize)
+stage.color <- c("#ff4000", "#ff8c00", "#ffe500", "#b2db11", "#1b9850", "#00d3cc", "#0188a8")
+names(stage.color) <- c("E11.5", "E12.0", "E13.0", "E13.5", "E14.0", "E15.0", "E17.0")
+cluster.color <- c(scales::hue_pal()(16)[1], scales::hue_pal()(16)[2], scales::hue_pal()(16)[3], 
+                   scales::hue_pal()(16)[6], scales::hue_pal()(16)[7], scales::hue_pal()(16)[8], 
+                   scales::hue_pal()(16)[9], scales::hue_pal()(16)[10], scales::hue_pal()(16)[11],
+                   scales::hue_pal()(16)[12], scales::hue_pal()(16)[13], scales::hue_pal()(16)[14], scales::hue_pal()(16)[15])
+names(cluster.color) <- c("0", "1", "2", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14")
+  
+hat <- HeatmapAnnotation(stage = smooth_dataAll$stage,
+                        cluster = smooth_dataAll$cluster, 
+                        Space = anno_empty(border = FALSE),
+                        show_legend = c(FALSE, FALSE, FALSE), 
+                        gap = unit(1, "mm"),
+                        annotation_height = unit(c(1, 1, 0.1), c("null", "null", "null")), height = unit(1.5, "cm"),
+                        show_annotation_name = FALSE,
+                        col = list(stage = stage.color, cluster = cluster.color))
+
+ordered_split <- clustered_heatmap_matrix$Cluster
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+ht_reordered2 <- Heatmap(as.matrix(ordered_heatmap_matrix),
+    use_raster = F,
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    show_row_dend = FALSE,
+    show_column_dend = FALSE,
+    show_row_names = FALSE,
+    show_column_names = FALSE,
+    column_split = smooth_dataAll$lineage,
+    row_split = ordered_split,
+    column_gap = unit(0.8, "mm"),
+    row_gap = unit(0.8, "mm"),
+    name = " ",
+    right_annotation = har,
+    left_annotation = hal,
+    top_annotation = hat,
+    heatmap_legend_param = list(title = "", legend_height = unit(6, "cm")),
+    row_title = c("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9", "GC10", "GC11", "GC12", "GC13"),
+    #row_title_gp = gpar(fill = "red", col = "white", border = "white"),
+    border = TRUE,
+    row_title_rot = 0,
+    col = cols)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+ht_reordered2 <- draw(ht_reordered2)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Save heatmap
+saveRDS(ht_reordered2, "./output/All_pseudo_DEG_heatmap_reordered_02.obj")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Save heatmap matrix
+current.cluster.ids <- unique(clustered_heatmap_matrix$Cluster)
+new.cluster.ids <- c("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9", "GC10", "GC11", "GC12", "GC13")
+clustered_heatmap_matrix$Cluster <- plyr::mapvalues(clustered_heatmap_matrix$Cluster, 
+                                                    from = current.cluster.ids, to = new.cluster.ids)
+saveRDS(clustered_heatmap_matrix, "./output/All_pseudo_DEG_heatmap_cluster_matrix_02.obj")
+```
+
+## Save gene list in each cluster
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+gene.list <- list()
+for (i in c("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9", "GC10", "GC11", "GC12", "GC13")) {
+  data <- clustered_heatmap_matrix %>% dplyr::filter(Cluster == i)
+  gene.list[[i]] <- as.vector(data$gene)
+}
+names(gene.list) <- c("GC1", "GC2", "GC3", "GC4", "GC5", "GC6", "GC7", "GC8", "GC9", "GC10", "GC11", "GC12", "GC13")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(gene.list, "./output/All_pseudo_DEG_heatmap_cluster_gene.list_02.obj")
+```
+
+
+## Enrichment analysis
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load libraries
+library("clusterProfiler")
+library("org.Mm.eg.db")
+library("enrichR")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+gene.cluster.list <- readRDS("./output/All_pseudo_DEG_heatmap_cluster_gene.list_02.obj")
+lapply(gene.cluster.list, head)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+entrezgene.cluster.list <- gene.cluster.list
+for (i in 1:13) {
+  eg <- bitr(gene.cluster.list[[i]], fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+  entrezgene.cluster.list[[i]] <- eg$ENTREZID
+}
+```
+
+### enrichGO
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=23, fig.height=10}
+ck <- clusterProfiler::compareCluster(geneCluster = entrezgene.cluster.list, 
+                                      fun = "enrichGO", OrgDb = 'org.Mm.eg.db', pvalueCutoff = 0.05)
+dotplot(ck)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+ck@compareClusterResult$geneSYMBOL <- ck@compareClusterResult$geneID
+for (i in 1:length(ck@compareClusterResult$geneID)){
+  genes <- unlist(strsplit(ck@compareClusterResult$geneID[i], "/"))
+  eg <- bitr(genes, fromType = "ENTREZID", toType = "SYMBOL", OrgDb = "org.Mm.eg.db")
+  ck@compareClusterResult$geneSYMBOL[i] <- paste(unlist(eg$SYMBOL), collapse = "/")
+}
+#head(as.data.frame(ck))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+write.table(as.data.frame(ck), "./output/Allepithelium_pseudotime_DEG_enrichGO.txt", 
+            quote = F, row.names = F, col.names = T, append = F, sep = "\t")
+```
+
+### enrichKEGG
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=23, fig.height=10}
+ck2 <- clusterProfiler::compareCluster(geneCluster = entrezgene.cluster.list, 
+                                       fun = "enrichKEGG", organism = "mmu", pvalueCutoff = 0.05)
+dotplot(ck2)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+ck2@compareClusterResult$geneSYMBOL <- ck2@compareClusterResult$geneID
+for (i in 1:length(ck2@compareClusterResult$geneID)){
+  genes <- unlist(strsplit(ck2@compareClusterResult$geneID[i], "/"))
+  eg <- bitr(genes, fromType = "ENTREZID", toType = "SYMBOL", OrgDb = "org.Mm.eg.db")
+  ck2@compareClusterResult$geneSYMBOL[i] <- paste(unlist(eg$SYMBOL), collapse = "/")
+}
+#head(as.data.frame(ck2))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+write.table(as.data.frame(ck2), "./output/Allepithelium_pseudotime_DEG_enrichKEGG.txt", 
+            quote = F, row.names = F, col.names = T, append = F, sep = "\t")
+```
+
+### Reactome_2016
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+dbs <- c("Reactome_2016")
+enrich.list <- list()
+for (i in 1:13) {
+  data <- gene.cluster.list[[i]]
+  enrich.list[[i]] <- enrichR::enrichr(data, dbs)
+  enrich.list[[i]][[1]]$Cluster <- rep(paste("GC", i, sep=""), length = nrow(enrich.list[[i]][[1]]))
+}
+
+ck3 <- list()
+for (i in 1:13) {
+  ck3 <- rbind(ck3, enrich.list[[i]][[1]])
+}
+#head(as.data.frame(ck3))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+write.table(as.data.frame(ck3), "./output/Allepithelium_pseudotime_DEG_Reactome_2016.txt", 
+            quote = F, row.names = F, col.names = T, append = F, sep = "\t")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, eval=FALSE}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+

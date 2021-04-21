@@ -1,0 +1,365 @@
+---
+title: Analysis of scRNA-seq data 5
+author: <span style="font-style:italic"> Ritsuko Morita </span>
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: '5'
+    df_print: paged
+    css: ./style/style.css
+---
+
+# `r kableExtra::text_spec("Seurat analysis", bold = TRUE)`
+Here, the E12.0 epithelial cell-derived fraction was extracted and re-analyzed with Seurat version 2.3.4. 
+
+## Data setup
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Load libraries
+library(Seurat) # version 2.3.4
+library(useful) # Corner function
+library(ggplot2)
+library(dplyr)
+library(monocle)
+library(devtools)
+library(cowplot)
+library(knitr)
+library(kableExtra)
+
+# Load original functions
+source("./Src/Visualization_for_object_of_Seurat_v2.r")
+source("./Src/Visualization_for_object_of_Monocle_v2.r")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load dataset
+EWF <- readRDS("./output/mmHairF_tpm_Seurat_v2_all_scale10000.obj")
+dim(EWF@raw.data)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+##[1] 47818  1595
+```
+
+## Subset E12.0 epithelial cell-derived data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- SubsetData(EWF, ident.use = "Cluster1", subset.raw=TRUE) #Cluster1: epithelial cells
+EWF <- SubsetData(EWF, subset.name = "stage", accept.value = "E12.0", subset.raw=TRUE)
+# Remove 0 count data
+EWF@raw.data <- EWF@raw.data[which(rowSums(EWF@raw.data) != 0),]
+dim(EWF@raw.data)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+##[1] 46929   273
+```
+
+## Normalization, detection of variable genes and scaling
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- NormalizeData(object = EWF, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=15}
+EWF <- FindVariableGenes(object = EWF, mean.function = ExpMean, dispersion.function = LogVMR, 
+                         x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, 
+                         display.progress = FALSE)
+EWF <- ScaleData(object = EWF, vars.to.regress = c("nGene", "percent.mito"), display.progress = FALSE)
+```
+
+## Cell-Cycle Scoring and checking cell cycle effect
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Assign Cell-Cycle Scores
+cc.genes <- readLines(con = "./dataset/regev_lab_cell_cycle_genes.txt")
+s.genes <- cc.genes[1:43]
+g2m.genes <- cc.genes[44:97]
+
+EWF <- CellCycleScoring(object = EWF, s.genes = s.genes, g2m.genes = g2m.genes, set.ident = TRUE)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=7}
+# Perform linear dimensional reduction (PCA)
+# Running a PCA on cell cycle genes reveals that cells separate entirely by phase
+EWF <- RunPCA(object = EWF, pc.genes = c(s.genes, g2m.genes), do.print = FALSE)
+PCAPlot(object = EWF)
+```
+## Perform linear dimensional reduction (PCA) using scaled data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Now, a PCA on the variable genes no longer returns components associated with cell cycle
+EWF <- RunPCA(object = EWF, pc.genes = EWF@var.genes, do.print = F)
+EWF <- ProjectPCA(EWF, do.print = F)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+PCHeatmap(EWF, pc.use = 1:20, cells.use = 100, do.balanced = TRUE, do.return = FALSE, dendrogram = "none")
+```
+## Determine statistically significant principal components
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+EWF <- JackStraw(object = EWF, num.replicate = 100, display.progress = FALSE)
+JackStrawPlot(object = EWF, PCs = 1:20)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+PCElbowPlot(EWF)
+```
+
+## Cluster the cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=16.5, fig.height=4}
+EWF <- FindClusters(EWF, dims.use = c(1:10), reduction.type = "pca", resolution = 0.8, 
+                    print.output = 0, save.SNN = T, force.recalc = TRUE)
+```
+
+## Run Non-linear dimensional reduction (tSNE)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=16.5, fig.height=4}
+EWF <- RunTSNE(EWF, dims.use = c(1:20), do.fast = T)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=13, fig.height=9}
+plot_grid(myTSNEPlot(EWF, group.by = "stage", do.label = F, no.rect = F, 
+                     title = "Stage", pt.shape = 21, theme.grey = TRUE,
+                     pt.color = c("#ff8c00")),
+          myTSNEPlot(EWF, group.by = "plate", do.label = F, no.rect = F, 
+                     title = "Plate", pt.shape = 21, theme.grey = TRUE),
+          myTSNEPlot(EWF, group.by = "Phase", do.label = F, no.rect = F, 
+                     title = "Cell cycle phase", pt.shape = 21, theme.grey = TRUE),
+          myTSNEPlot(EWF, group.by = "ident", do.label = T, no.rect = F, 
+                     title = "Cluster", pt.shape = 21, theme.grey = TRUE, label.size = 6), align = "hv")
+```
+
+## Re-scaling the data and removing unwanted sources of variation including cell cycle effect
+This processing was performed base on the vignette named "Cell Cycle Regression" (https://satijalab.org/seurat/v3.2/cell_cycle_vignette.html).
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=7}
+# Regress out cell cycle scores and batch effect during data scaling
+EWF <- ScaleData(object = EWF, 
+                 vars.to.regress = c("S.Score", "G2M.Score", "nGene", "percent.mito", "plate"), 
+                 display.progress = FALSE)
+# When running a PCA on only cell cycle genes, cells no longer separate by cell-cycle phase
+EWF <- RunPCA(object = EWF, pc.genes = c(s.genes, g2m.genes), do.print = F)
+PCAPlot(object = EWF, group.by = "Phase")
+```
+
+## Performing linear dimensional reduction (PCA) using scaled data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Now, a PCA on the variable genes no longer returns components associated with cell cycle
+EWF <- RunPCA(object = EWF, pc.genes = EWF@var.genes, do.print = F)
+EWF <- ProjectPCA(EWF, do.print = F)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+PCHeatmap(EWF, pc.use = 1:20, cells.use = 100, do.balanced = TRUE, do.return = FALSE, dendrogram = "none")
+```
+
+
+## Determination of statistically significant principal components
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+EWF <- JackStraw(object = EWF, num.replicate = 100, display.progress = FALSE)
+JackStrawPlot(object = EWF, PCs = 1:20)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+PCElbowPlot(EWF)
+```
+
+## Clustering cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- FindClusters(EWF, dims.use = c(1:10), reduction.type = "pca", resolution = 0.8, 
+                    print.output = 0, save.SNN = T, force.recalc = TRUE)
+EWF <- RunTSNE(EWF, dims.use = c(1:20), do.fast = T)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=13, fig.height=8}
+plot_grid(myTSNEPlot(EWF, group.by = "stage", do.label = F, no.rect = F, title = "Stage", 
+                     pt.shape = 21, theme.grey = TRUE, pt.size = 5),
+          myTSNEPlot(EWF, group.by = "plate", do.label = F, no.rect = F, title = "Plate", 
+                     pt.shape = 21, theme.grey = TRUE, pt.size = 5),
+          myTSNEPlot(EWF, group.by = "Phase", do.label = F, no.rect = F, title = "Cell cycle phase", 
+                     pt.shape = 21, theme.grey = TRUE, pt.size = 5),
+          myTSNEPlot(EWF, group.by = "ident", do.label = T, no.rect = F, title = "Cluster", 
+                     pt.shape = 21, theme.grey = TRUE, 
+                     label.size = 6, pt.size = 5), ncol = 2, align = "v")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=9, fig.height=10}
+E12markers <- c("Bmp2", "Sp5", "Dkk4", "Shh", "Gadd45g", "Wnt10b", "Edar", "Pthlh", "Lhx2", "Ascl4", 
+                "Wif1", "Sox21", "Lrp4", "Smoc2", "Lmo1", "Sostdc1", "Wnt4", "Wnt7b", "Nfatc1", "Sox9")
+myFeaturePlot(EWF, E12markers, nCol = 4, title.size = 10, pch.use = 21, pt.size = 3)
+```
+
+## Finding differentially expressed genes
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+wf.markers <- FindAllMarkers(object = EWF, only.pos = TRUE, min.pct = 0.5, thresh.use = 1, test.use = "roc", print.bar = FALSE)
+wf.markers.top10 <- wf.markers %>% dplyr::group_by(cluster) %>% dplyr::top_n(10, myAUC)
+DoHeatmap(EWF, genes.use = wf.markers.top10$gene, slim.col.label = TRUE, remove.key = FALSE)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(EWF, file = "./output/mmHairF_tpm_Seurat_v2_E12epithelium_scale10000.obj")
+```
+
+
+# `r kableExtra::text_spec("Monocle analysis", bold = TRUE)`
+Semi-supervised pseudo-space analysis was performed with Monocle 2. 
+
+## Data setup
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- readRDS(file = "./output/mmHairF_tpm_Seurat_v2_E12epithelium_scale10000.obj")
+# Importing data from Seurat object
+E12.import <- importCDS(EWF, import_all = TRUE)
+# Converting TPM/FPKM values into mRNA counts
+rpc_matrix <- relative2abs(E12.import, method = "num_genes")
+RamDA <- newCellDataSet(as(as.matrix(rpc_matrix), "sparseMatrix"),
+                        phenoData = E12.import@phenoData,
+                        featureData = E12.import@featureData,
+                        lowerDetectionLimit = 0.5,
+                        expressionFamily = negbinomial.size())
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+RamDA <- estimateSizeFactors(RamDA)
+RamDA <- estimateDispersions(RamDA)
+```
+
+
+## Filtering low-quality cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+RamDA <- detectGenes(RamDA, min_expr = 0.1)
+
+expressed_genes <- row.names(subset(fData(RamDA), num_cells_expressed >= 5))
+
+pData(RamDA)$Total_mRNAs <- Matrix::colSums(exprs(RamDA))
+
+RamDA <- RamDA[, pData(RamDA)$Total_mRNAs < 1e6]
+upper_bound <- 10^(mean(log10(pData(RamDA)$Total_mRNAs)) + 4*sd(log10(pData(RamDA)$Total_mRNAs)))
+lower_bound <- 10^(mean(log10(pData(RamDA)$Total_mRNAs)) - 3*sd(log10(pData(RamDA)$Total_mRNAs)))
+qplot(Total_mRNAs, data = pData(RamDA), color = stage, geom = "density") + 
+  geom_vline(xintercept = lower_bound) + geom_vline(xintercept = upper_bound)
+
+RamDA <- RamDA[, pData(RamDA)$Total_mRNAs > lower_bound & pData(RamDA)$Total_mRNAs < upper_bound]
+RamDA <- detectGenes(RamDA, min_expr = 0.1)
+
+
+library("reshape2")
+
+L <- log(exprs(RamDA[expressed_genes, ]))
+melted_dens_df <- melt(Matrix::t(scale(Matrix::t(L))))
+qplot(value, geom = "density", data = melted_dens_df) + 
+  stat_function(fun = dnorm, size = 0.5, color = 'red') + 
+  xlab("Standardized log(TPM)") + ylab("Density")
+```
+
+## Classifying cells by type
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+placode_id1 <- row.names(subset(fData(RamDA), gene_short_name == "Bmp2"))
+placode_id2 <- row.names(subset(fData(RamDA), gene_short_name == "Shh"))
+placode_id3 <- row.names(subset(fData(RamDA), gene_short_name == "Sp5"))
+IFE_id1 <- row.names(subset(fData(RamDA), gene_short_name == "Lmo1"))
+IFE_id2 <- row.names(subset(fData(RamDA), gene_short_name == "Wnt4"))
+IFE_id3 <- row.names(subset(fData(RamDA), gene_short_name == "Wnt7b"))
+SCprogenitor_id <- row.names(subset(fData(RamDA), gene_short_name == "Nfatc1"))
+
+cth <- newCellTypeHierarchy()
+cth <- addCellType(cth, "placode", classify_func = function(x) { x[placode_id1, ] >= 1 & x[placode_id2, ] >= 1 & 
+    x[placode_id3, ] >= 1 })
+cth <- addCellType(cth, "IFE", classify_func = function(x) { x[placode_id1, ] < 1 & x[placode_id2, ] < 1 & 
+    x[placode_id3, ] < 1 & x[IFE_id1, ] >= 1 &  x[IFE_id2, ] >= 1 & x[IFE_id3, ] >= 1 })
+cth <- addCellType(cth, "SCprogenitor", classify_func = function(x) { x[placode_id1, ] < 1 & x[placode_id2, ] < 1 & 
+    x[placode_id3, ] < 1 & x[IFE_id2, ] < 1 & x[SCprogenitor_id, ] >= 0.8})
+
+RamDA <- classifyCells(RamDA, cth, 0.1)
+
+table(pData(RamDA)$CellType)
+
+pie <- ggplot(pData(RamDA),
+aes(x = factor(1), fill = factor(CellType))) + geom_bar(width = 1)
+pie + coord_polar(theta = "y") +
+theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+```
+
+## Clustering cells using marker genes
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+marker_diff <- markerDiffTable(RamDA[expressed_genes, ], cth, 
+                               residualModelFormulaStr = "~S.Score + G2M.Score + plate + num_genes_expressed", cores = 1)
+
+candidate_clustering_genes <- row.names(subset(marker_diff, qval < 0.01))
+marker_spec <- calculateMarkerSpecificity(RamDA[candidate_clustering_genes, ], cth)
+selectTopMarkers(marker_spec, 3)
+
+semisup_clustering_genes <- unique(selectTopMarkers(marker_spec, 500)$gene_id)
+RamDA <- setOrderingFilter(RamDA, semisup_clustering_genes)
+```
+
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+plot_ordering_genes(RamDA)
+
+plot_pc_variance_explained(RamDA, return_all = F)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+RamDA <- reduceDimension(RamDA, max_components = 2, num_dim = 3,
+                         norm_method = 'log',
+                         reduction_method = 'tSNE',
+                         residualModelFormulaStr = "~S.Score + G2M.Score + plate + num_genes_expressed",
+                         verbose = T)
+
+RamDA <- clusterCells(RamDA, num_clusters = 3)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=5, fig.width=17}
+plot_grid(plot_cell_clusters(RamDA, 1, 2, color = "Cluster"), 
+          plot_cell_clusters(RamDA, 1, 2, color = "plate"),
+          plot_cell_clusters(RamDA, 1, 2, color = "Phase"),
+          plot_cell_clusters(RamDA, 1, 2, color = "CellType"), ncol = 4)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+plot_rho_delta(RamDA, rho_threshold = 2, delta_threshold = 4)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+RamDA <- clusterCells(RamDA, rho_threshold = 2, delta_threshold = 4, skip_rho_sigma = T, verbose = F)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+plot_cell_clusters(RamDA, 1, 2, markers = c("Bmp2", "Shh", "Nfatc1", "Sox9", "Lmo1", "Wnt4"))
+```
+
+## Constructing single cell trajectories
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Trajectory step 1: choosing genes that define progress
+marker_diff <- markerDiffTable(RamDA[expressed_genes, ], cth, 
+                               residualModelFormulaStr = "~S.Score + G2M.Score + plate + num_genes_expressed", cores = 1)
+semisup_clustering_genes <- row.names(marker_diff)[order(marker_diff$qval)][1:1000]
+RamDA <- setOrderingFilter(RamDA, semisup_clustering_genes)
+
+# Trajectory step 2: reduce data dimensionality
+RamDA <-reduceDimension(RamDA, method = 'DDRTree')
+
+# Trajectory step 3: order cells along the trajectory
+RamDA <-orderCells(RamDA)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=5, fig.width=23}
+plot_grid(plot_cell_trajectory(RamDA, color_by = "Cluster"), 
+          plot_cell_trajectory(RamDA, color_by = "CellType"),
+          plot_cell_trajectory(RamDA, color_by = "Phase"),
+          plot_cell_trajectory(RamDA, color_by = "plate"), 
+          plot_cell_trajectory(RamDA, color_by = "Pseudotime"), ncol = 5)
+```
+
+## Differential expression analysis
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Finding Genes that Change as a Function of Pseudotime
+to_be_tested <- row.names(subset(fData(RamDA), gene_short_name %in% c("Shh", "Bmp2", "Wnt4", "Lmo1", "Nfatc1", "Sox9")))
+cds_subset <- RamDA[to_be_tested, ]
+diff_test_res_ex <- differentialGeneTest(cds_subset, fullModelFormulaStr = "~sm.ns(Pseudotime)")
+diff_test_res_ex[, c("gene_short_name", "pval", "qval")]
+plot_genes_in_pseudotime(cds_subset, color_by = "CellType")
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Clustering Genes by Pseudotemporal Expression Pattern
+diff_test_res_ps <- differentialGeneTest(RamDA[expressed_genes, ], fullModelFormulaStr = "~sm.ns(Pseudotime)")
+sig_gene_names <- row.names(subset(diff_test_res_ps, qval < 0.1))
+```
+
+
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+plot_pseudotime_heatmap(RamDA[sig_gene_names, ],
+                #num_clusters = 3,
+                cores = 1,
+                show_rownames = T,
+                return_heatmap = T
+                )
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(RamDA, file = "./output/mmHairF_tpm_monocle_v2_E12epithelium.obj")
+write.table(diff_test_res_ps, "./output/E12epithelium_Pseudospace_DEG.txt", quote = F)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+sessionInfo()
+```

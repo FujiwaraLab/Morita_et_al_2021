@@ -1,0 +1,308 @@
+---
+title: Analysis of scRNA-seq data 2
+author: <span style="font-style:italic"> Ritsuko Morita </span>
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: '5'
+    df_print: paged
+    css: ./style/style.css
+---
+
+# `r kableExtra::text_spec("Seurat analysis", bold = TRUE)`
+Here, the epithelial cell-derived fraction was extracted and re-analyzed with Seurat version 2.3.4. 
+
+## Data setup
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Load libraries
+library(Seurat) # version 2.3.4
+library(useful) # Corner function
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(devtools)
+library(cowplot)
+
+# Load original functions
+source("./Src/Visualization_for_object_of_Seurat_v2.r")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Load dataset
+EWF0 <- readRDS("./output/mmHairF_tpm_Seurat_v2_all_scale10000.obj")
+dim(EWF0@raw.data)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+##[1] 47818  1595
+```
+
+## Subset epithelial cell-derived data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Subset epithelial cell-derived data
+EWF <- SubsetData(EWF0, ident.use = "Cluster1", subset.raw = TRUE)
+
+# Remove "E12_160809001" plate (Only this plate showed the batch effect)
+EWF <- SubsetData(EWF, subset.name = "plate", 
+                  accept.value = c("E11_180312003", "E12_160809003", "E12_160809004",
+                                  "E13_150126001", "E13_160126002", "E13_160126004",
+                                  "E13_161012002", "E13_161012003",
+                                  "E14_161019002", "E14_161019003",
+                                  "E15_150126001", "E15_161014001",
+                                  "E15_161014002", "E15_161014003",
+                                  "E17_161014001", "E17_161014002", "E17_161014003"), subset.raw = TRUE)
+# Remove 0 count data
+EWF@raw.data <- EWF@raw.data[which(rowSums(EWF@raw.data) != 0), ]
+dim(EWF@raw.data)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+##[1] 47630   962
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+library(easyGgplot2)
+p<-ggplot2.violinplot(EWF@meta.data$nGene,addDot=TRUE, dotSize=1.7,dotPosition="jitter", 
+                      jitter=0.2, addMean = TRUE, xShowTitle=FALSE, yShowTitle=FALSE, mainTitle="nGene")
+p=p+theme_grey()+xlab("")+ylab("")+ 
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())+
+  geom_hline(yintercept = 16000, colour = "red")
+p1<-ggplot2.violinplot(EWF@meta.data$percent.mito,addDot=TRUE, dotSize=1.7,dotPosition="jitter", 
+                       jitter=0.2, addMean = TRUE, xShowTitle=FALSE, yShowTitle=FALSE, mainTitle="percent.mito")
+p1=p1+theme_grey()+xlab("")+ylab("")+ 
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())+
+  geom_hline(yintercept = 0.07, colour = "red")
+plot_grid(p, p1)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+p<-ggplot2.violinplot(EWF@meta.data, xName="stage", yName="nGene",addDot=TRUE, dotSize=1.7,dotPosition="jitter", 
+                      jitter=0.2, addMean = TRUE, xShowTitle=TRUE, yShowTitle=FALSE, mainTitle="nGene")
+p=p+theme_grey()+xlab("")+ylab("")+ 
+  geom_hline(yintercept = 16000, colour = "red")
+p1<-ggplot2.violinplot(EWF@meta.data, xName="stage", yName="percent.mito",addDot=TRUE, dotSize=1.7,dotPosition="jitter", 
+                       jitter=0.2, addMean = TRUE, xShowTitle=TRUE, yShowTitle=FALSE, mainTitle="percent.mito")
+p1=p1+theme_grey()+xlab("")+ylab("")+ 
+  geom_hline(yintercept = 0.07, colour = "red")
+plot_grid(p, p1)
+```
+
+## Normalizing the data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- NormalizeData(object = EWF, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Detection of variable genes across the single cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=15}
+EWF <- FindVariableGenes(object = EWF, mean.function = ExpMean, dispersion.function = LogVMR, 
+                         x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 1)
+```
+
+## Scaling the data and removing unwanted sources of variation
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- ScaleData(object = EWF, vars.to.regress = c("nGene", "percent.mito"))
+```
+
+## Cell-Cycle Scoring and checking cell cycle effect
+This processing was performed base on the vignette named "Cell Cycle Regression" (https://satijalab.org/seurat/v3.2/cell_cycle_vignette.html).
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Assign Cell-Cycle Scores
+cc.genes <- readLines(con = "./dataset/regev_lab_cell_cycle_genes.txt")
+s.genes <- cc.genes[1:43]
+g2m.genes <- cc.genes[44:97]
+
+EWF <- CellCycleScoring(object = EWF, s.genes = s.genes, g2m.genes = g2m.genes, set.ident = TRUE)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=7}
+# Perform linear dimensional reduction (PCA)
+# Running a PCA on cell cycle genes reveals that cells separate entirely by phase
+EWF <- RunPCA(object = EWF, pc.genes = c(s.genes, g2m.genes), do.print = FALSE)
+PCAPlot(object = EWF)
+```
+
+## Perform linear dimensional reduction (PCA) using scaled data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Now, a PCA on the variable genes no longer returns components associated with cell cycle
+EWF <- RunPCA(object = EWF, pc.genes = EWF@var.genes, do.print = F)
+EWF <- ProjectPCA(EWF, do.print = F)
+```
+```{r, message=FALSE, warning=FALSE, fig.height=15, fig.width=10, eval=FALSE}
+PCHeatmap(EWF, pc.use = 1:20, cells.use = 100, do.balanced = TRUE, do.return = FALSE, dendrogram = "none")
+```
+
+## Determine statistically significant principal components
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+EWF <- JackStraw(object = EWF, num.replicate = 100, display.progress = FALSE)
+JackStrawPlot(object = EWF, PCs = 1:20)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+PCElbowPlot(EWF)
+```
+
+## Cluster the cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=16.5, fig.height=4}
+EWF <- FindClusters(EWF, dims.use = c(1:20), reduction.type = "pca", resolution = 2.5, 
+                    print.output = 0, save.SNN = T, force.recalc = TRUE)
+```
+
+## Run Non-linear dimensional reduction (tSNE)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- RunTSNE(EWF, dims.use = c(1:20), do.fast = T)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=13, fig.height=8}
+plot_grid(myTSNEPlot(EWF, group.by = "stage", do.label = F, no.rect = F, 
+                     title = "Stage", pt.shape = 21, theme.grey = TRUE,
+                     pt.color = c("#ff4000", "#ff8c00", "#ffe500", "#b2db11", "#1b9850", "#00d3cc", "#0188a8")),
+          myTSNEPlot(EWF, group.by = "plate", do.label = F, no.rect = F, 
+                     title = "Plate", pt.shape = 21, theme.grey = TRUE, legend_ncol = 2),
+          myTSNEPlot(EWF, group.by = "Phase", do.label = F, no.rect = F, 
+                     title = "Cell cycle phase", pt.shape = 21, theme.grey = TRUE),
+          myTSNEPlot(EWF, group.by = "ident", do.label = T, no.rect = F, 
+                     title = "Cluster", pt.shape = 21, theme.grey = TRUE, 
+                     legend_ncol = 2, label.size = 6), ncol = 2, align = "hv")
+```
+
+## Check the populations in each cluster
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=9, fig.height=16}
+myFeaturePlot(EWF, c("Krt5", "Krt14", "Epcam", "Itga6", 
+                     "Nfatc1", "Sox9", "Krt15", "Tgfb2", 
+                     "Krt6a", "Krt1", "Krt10", "Aqp3",
+                     "Shh", "Lef1", "Wnt10b", "Dcn",
+                     "Krt8", "Krt20", "Lmo1", "BC100530",
+                     "Fgf9", "Shisa2", "Vdr", "Smtn",
+                     "Sostdc1", "Pthlh", "nGene", "percent.mito"), 
+              nCol = 4, title.size = 10, pch.use = 21, outline.size = 0.1, outline.color = "grey50")
+```
+
+
+
+
+## Re-scaling the data and removing unwanted sources of variation including cell cycle effect
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=7}
+# Regress out cell cycle scores during data scaling
+EWF <- ScaleData(object = EWF, vars.to.regress = c("nGene", "percent.mito", "S.Score", "G2M.Score"), display.progress = FALSE)
+# When running a PCA on only cell cycle genes, cells no longer separate by cell-cycle phase
+EWF <- RunPCA(object = EWF, pc.genes = c(s.genes, g2m.genes), do.print = F)
+PCAPlot(object = EWF)
+```
+
+## Perform linear dimensional reduction (PCA) using scaled data
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# Now, a PCA on the variable genes no longer returns components associated with cell cycle
+EWF <- RunPCA(object = EWF, pc.genes = EWF@var.genes, do.print = F)
+EWF <- ProjectPCA(EWF, do.print = F)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+PCHeatmap(EWF, pc.use = 1:20, cells.use = 100, do.balanced = TRUE, do.return = FALSE, dendrogram = "none")
+```
+
+## Determine statistically significant principal components
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=15, fig.width=10}
+EWF <- JackStraw(object = EWF, num.replicate = 100, display.progress = FALSE)
+JackStrawPlot(object = EWF, PCs = 1:20)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=5}
+PCElbowPlot(EWF)
+```
+
+## Cluster the cells
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=16.5, fig.height=4}
+EWF <- FindClusters(EWF, dims.use = c(1:20), reduction.type = "pca", resolution = 2, 
+                    print.output = 0, save.SNN = T, force.recalc = TRUE)
+```
+
+## Run Non-linear dimensional reduction (tSNE)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF <- RunTSNE(EWF, dims.use = c(1:20), do.fast = T)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=14, fig.height=8}
+plot_grid(myTSNEPlot(EWF, group.by = "stage", do.label = F, no.rect = F, 
+                     title = "Stage", pt.shape = 21, theme.grey = TRUE,
+                     pt.color = c("#ff4000", "#ff8c00", "#ffe500", "#b2db11", "#1b9850", "#00d3cc", "#0188a8")),
+          myTSNEPlot(EWF, group.by = "plate", do.label = F, no.rect = F, 
+                     title = "Plate", pt.shape = 21, theme.grey = TRUE, legend_ncol = 2),
+          myTSNEPlot(EWF, group.by = "Phase", do.label = F, no.rect = F, 
+                     title = "Cell cycle phase", pt.shape = 21, theme.grey = TRUE),
+          myTSNEPlot(EWF, group.by = "ident", do.label = T, no.rect = F, 
+                     title = "Cluster", pt.shape = 21, theme.grey = TRUE, 
+                     legend_ncol = 2, label.size = 6), ncol = 2, align = "hv")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(EWF, "./output/mmHairF_tpm_Seurat_v2_epithelium_without_E12-01_scale10000.obj")
+```
+
+## Check the populations in each cluster
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=9, fig.height=16}
+myFeaturePlot(EWF, c("Krt5", "Krt14", "Epcam", "Itga6", 
+                     "Nfatc1", "Sox9", "Krt15", "Tgfb2", 
+                     "Krt6a", "Krt1", "Krt10", "Aqp3",
+                     "Shh", "Lef1", "Wnt10b", "Dcn",
+                     "Krt8", "Krt20", "Lmo1", "BC100530",
+                     "Fgf9", "Shisa2", "Vdr", "Smtn",
+                     "Sostdc1", "Pthlh", "nGene", "percent.mito"), 
+              nCol = 4, title.size = 10, pch.use = 21, outline.size = 0.1, outline.color = "grey50")
+```
+
+## Set the minor populations to new identities
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=5, fig.height=5}
+# Check the position of minor populations
+# Include additional data to display alongside cell names in data.hover
+FeaturePlot(object = EWF, features.plot = "Krt8", do.hover = TRUE, data.hover = c("ident", "tSNE_1", "tSNE_2"))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=5, fig.height=5}
+# Check the position of minor populations
+# Include additional data to display alongside cell names in data.hover
+DimPlot(object = EWF, reduction.use = "tsne", do.hover = TRUE, data.hover = c("ident", "tSNE_1", "tSNE_2"))
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=5, fig.height=5}
+# extraction of minor population 1
+df <- data.frame(EWF@dr$tsne@cell.embeddings, ident = EWF@ident)
+colnames(df) <- c("tSNE_1", "tSNE_2", "ident")
+selected.data1 <- subset(df, -4 < tSNE_1 & tSNE_1 < -2 & 6 < tSNE_2 & tSNE_2 < 7.5) 
+selected.cells1 <- row.names(selected.data1)
+
+highlightTSNEPlot(EWF, pt.shape = 21, theme.grey = TRUE, highlight.cell = selected.cells1)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=5, fig.height=5}
+# extraction of minor population 2
+selected.data2 <- subset(df, -17 < tSNE_1 & tSNE_1 < -5 & -4.2 < tSNE_2 & tSNE_2 < 1.83) 
+selected.cells2 <- row.names(selected.data2)
+
+highlightTSNEPlot(EWF, pt.shape = 21, theme.grey = TRUE, highlight.cell = selected.cells2)
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+EWF@meta.data$labelmod.res.2 <- EWF@ident
+# Set the minor populations to new identities
+EWF <- SetIdent(object = EWF, cells.use = selected.cells1, ident.use = "14")
+EWF <- SetIdent(object = EWF, cells.use = selected.cells2, ident.use = "15")
+EWF <- StashIdent(object = EWF, save.name = "labelmod.res.2_added")
+
+new.cluster.ids <- c("0", "1", "2", "7", "4", "5", "6", "8", "9", "10", "12", "11", "13", "14", "15", "3")
+names(new.cluster.ids) <- c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15")
+
+current.cluster.ids <- levels(EWF@ident)
+
+EWF@ident <- plyr::mapvalues(x = EWF@ident, from = current.cluster.ids, to = new.cluster.ids)
+
+EWF@ident <- factor(EWF@ident,
+                    levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"))
+EWF@meta.data$labelmod.res.2_added <- EWF@ident
+```
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=13, fig.height=5}
+plot_grid(myTSNEPlot(EWF, do.label = T, no.rect = F, legend_ncol = 2, label.size = 5, group.by = "labelmod.res.2"),
+          myTSNEPlot(EWF, do.label = T, no.rect = F, legend_ncol = 2, label.size = 5, group.by = "labelmod.res.2_added"),
+          ncol = 2)
+```
+
+
+## Save new Seurat object
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(EWF, "./output/mmHairF_tpm_Seurat_v2_epithelium_E12-01_scale10000_newclus.obj")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+sessionInfo()
+```
+
+

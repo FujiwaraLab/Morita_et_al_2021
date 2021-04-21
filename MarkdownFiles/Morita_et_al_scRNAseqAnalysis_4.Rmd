@@ -1,0 +1,179 @@
+---
+title: Analysis of scRNA-seq data 4
+author: <span style="font-style:italic"> Ritsuko Morita </span>
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: '5'
+    df_print: paged
+    css: ./style/style.css
+---
+
+# `r kableExtra::text_spec("Data output", bold = TRUE)`
+Here, the results of analysis of the epithelial cell fraction by Seurat were visualized.
+
+## Data setup
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Load libraries
+library(Seurat) # version 3.0.1
+library(useful) # Corner function
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+library(devtools)
+library(cowplot)
+library(viridis)
+
+# Load original functions
+source("./Src/Visualization_for_object_of_Seurat_v3.r")
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+# Load dataset
+EWF0 <- readRDS("./output/mmHairF_tpm_Seurat_v2_epithelium_without_E12-01_scale10000.obj")
+# Updates Seurat v2 object to Seurat v3 object
+EWF <- UpdateSeuratObject(EWF0)
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+saveRDS(EWF, "./output/mmHairF_tpm_Seurat_v3_epithelium_without_E12-01_scale10000.obj")
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+EWF <- readRDS("./output/mmHairF_tpm_Seurat_v3_epithelium_without_E12-01_scale10000.obj")
+```
+
+## Visualization 1 (TSNEplot colored by Stage)
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+myTSNEPlot(EWF, do.label = F, no.rect = F, legend_ncol = 1, label.size = 5, group.by = "stage_new", pt.size = 3,
+           pt.color = c("#ff4000", "#ff8c00", "#ffe500", "#b2db11", "#1b9850", "#00d3cc", "#0188a8"))
+```
+
+## Visualization 2 (TSNEplot colored by Cluster)
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+myTSNEPlot(EWF, do.label = T, no.rect = F, legend_ncol = 2, label.size = 5, pt.size = 3)
+```
+
+## Visualization 3 (TSNEplot colored by plates in each stage)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=6, fig.width=18}
+# Check the batch effect by highlighting plate information
+
+plot_grid(highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = "E11_180312003"), # E11.5
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E12_160809001", "E12_160809003", "E12_160809004")), # E12.0
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E13_150126001", "E13_160126002", "E13_160126004")), # E13.0
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E13_161012002", "E13_161012003")), # E13.5
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E14_161019002", "E14_161019003")), # E14.0
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E15_150126001", "E15_161014001", "E15_161014002", "E15_161014003")), # E15.0 
+          highlightTSNEPlot(EWF, group.by = "plate", pt.shape = 21, theme.grey = TRUE,
+                            highlight.use = c("E17_161014001", "E17_161014002", "E17_161014003")), # E17.0
+          ncol = 4, align = "v")
+```
+
+## Visualization 4 (Distrubution of each plate in each cluster)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+df0 <- data.frame(Plate = EWF@meta.data[, "plate"], Cluster = EWF@active.ident)
+df0 <- FSA::Subset(df0, df0$Plate != "kE12_180314001" | df0$Plate != "E12_160809001")
+df <- df0 %>% 
+  dplyr::group_by(Plate) %>%
+  dplyr::select(Cluster) %>%
+  table %>% as.data.frame() %>%
+  dplyr::group_by(Plate) %>% 
+  dplyr::mutate(Pos = cumsum(Freq) - (Freq * 0.5))
+
+brks <- c(0, 0.25, 0.5, 0.75, 1)
+
+df %>% 
+  ggplot(aes(x =  Plate, y = Freq, fill = Cluster)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(breaks = brks, labels = scales::percent(brks)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  guides(fill=guide_legend(ncol=2, byrow=TRUE))
+```
+
+
+## Finding differentially expressed features (cluster biomarkers)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+# find markers for every cluster compared to all remaining cells, report
+# only the positive ones
+wf.markers.res2 <- FindAllMarkers(object = EWF, only.pos = TRUE, min.pct = 0.5, thresh.use = 1, test.use = "roc", print.bar = FALSE)
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+saveRDS(wf.markers.res2, "./output/WFepithelium_DEG_res2.obj")
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+wf.markers.res2 <- readRDS("./output/WFepithelium_DEG_res2.obj")
+```
+
+
+
+## Visualization 5 (Heatmap showing DEGs)
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+wf.markers.res2.top25 <- wf.markers.res2 %>% dplyr::group_by(cluster) %>% dplyr::top_n(25, myAUC) %>% dplyr::top_n(25, avg_diff) 
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+colfunc <- colorRampPalette(c("black", "#440154"))
+heatmap.col <- c(colfunc(20), viridis(50))
+myComplexHeatmap(EWF, 
+                 genelist = wf.markers.res2.top25, 
+                 disp.min = -2.5, disp.max = 2.5, 
+                 group.by = "labelmod.res.2_added", 
+                 heatmap.col = heatmap.col, 
+                 ann.colors = scales::hue_pal()(16),
+                 label.set = c("Wnt9b", "Wnt7b", "Nell2", "Edar", "Wnt10b", "Shh", "Ly6d", "Krt80", 
+                               "Krt6a", "Krt1", "Aqp3", "BC100530", "Lmo1", "Tgfb2", "Nfatc1", "Fbn2",
+                               "Adamts20", "Adamts17", "Tgfbi", "Tgfbi", "Shisa2", "Smtn", "Vdr", "Pou4f3"))
+```
+
+
+
+
+
+## Visualization 6 (FeaturePlot)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.height=3, fig.width=1}
+genes <- list(Epithelium = c("Cdh1", "Itga6", "Krt5"), 
+              HairGerm = c("Shh", "Lef1", "Wnt10b"), 
+              HFSCs = c("Nfatc1", "Sox9", "Krt15"), 
+              Infundibulum = c("Aqp3", "Klf5", "Fst"), 
+              KeratinizedCells = c("Krt6a", "Krt1", "Krt10"), 
+              MerkelCells = c("Krt8", "Krt20", "Sox2"))
+myFP <- list()
+myFP <- lapply(genes, function(i) myFeaturePlot(EWF, i, nCol = 1, title.size = 10, pch.use = 21, outline.size = 0.1, 
+                                                outline.color = "grey50"))
+# print(myFP[[1]])
+```
+
+, eval=FALSE
+
+## Visualization 7 (FeaturePlot divided by each stage)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=20, fig.height=4}
+gene <- list("Krt1", "Krt6a", "Ly6d", "Krt80", "Aqp3", "BC100530", "Wnt9b", "Lmo1", "Pthlh", "Nfatc1", "Tgfb2", "Fbn2", 
+             "Adamts20", "Adamts17", "Tgfbi", "Shisa2", "Smtn", "Vdr", "Wnt10b", "Shh")
+
+mySP <- list()
+mySP <- lapply(gene, function(i) StagePlot3Mod(EWF, 
+                                               stage.use = c("E11.5", "E12.0", "E13.0", "E13.5", "E14.0", "E15.0", "E17.0"), 
+                                               features.use = i, title.size = 15, nCol = 7))
+# print(mySP[[1]])
+```
+
+
+
+
+## Visualization 8 (DotPlot)
+```{r, message=FALSE, warning=FALSE, eval=FALSE, fig.width=10, fig.height=6, tidy=TRUE}
+DotPlot(object = EWF, assay = "RNA",
+        features = c("Wnt9b", "Wnt7b", "Wnt10b", "Shh", "Ly6d", "Krt80", "Krt6a", "Krt1", "Aqp3", "BC100530", "Tgfb2", 
+                     "Nfatc1", "Fbn2","Adamts20", "Tgfbi", "Shisa2", "Smtn", "Vdr", "Pou4f3")) + 
+  RotatedAxis() +
+  theme(axis.text.x = element_text(size = 16, family = "Helvetica", face = "bold.italic"),
+        axis.text.y = element_text(size = 16, family = "Helvetica", face = "bold"))
+```
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+sessionInfo()
+```
